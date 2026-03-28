@@ -317,8 +317,8 @@ body::before {
 // ─────────────────────────────────────────────
 //  CONFIG — replace with your Supabase values
 // ─────────────────────────────────────────────
-const SUPABASE_URL  = 'https://irslndmtxhovvickocqo.supabase.co';
-const SUPABASE_ANON = 'sb_publishable_aYo1EVAXJdlfs4dshmFmwg_LrBspyn0';
+const SUPABASE_URL  = 'https://YOUR_PROJECT.supabase.co';
+const SUPABASE_ANON = 'YOUR_ANON_KEY';
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
@@ -357,56 +357,106 @@ const sortBtn        = document.getElementById('sort-btn');
 // ─────────────────────────────────────────────
 //  UTILS
 // ─────────────────────────────────────────────
-const escHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const escHtml    = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const formatDate = iso => new Date(iso).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
 const monthKey   = iso => { const d=new Date(iso); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
 const monthLabel = key => { const [y,m]=key.split('-'); return new Date(+y,+m-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'}); };
 const randomPos  = () => ({ x: 60+Math.random()*(window.innerWidth-280-120), y: 60+Math.random()*(window.innerHeight-180-120) });
 const openOverlay  = id => document.getElementById(id).classList.add('open');
 const closeOverlay = id => document.getElementById(id).classList.remove('open');
+const hideLoading  = () => { loadingEl.style.display='none'; };
 
 // ─────────────────────────────────────────────
-//  BOOT
+//  BOOT — single entry point, no duplicate calls
 // ─────────────────────────────────────────────
 async function init() {
-  const { data:{ session } } = await sb.auth.getSession();
-  if (session) await onSignIn(session.user, false);
-  else hideLoading();
+  // onAuthStateChange fires reliably for both existing sessions and new sign-ins.
+  // We use it as the single source of truth and don't call onSignIn from anywhere else.
+  sb.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_IN' && session) {
+      await handleSignIn(session.user);
+    }
+    if (event === 'SIGNED_OUT') {
+      handleSignOut();
+    }
+    // INITIAL_SESSION fires once on page load with the existing session (or null).
+    if (event === 'INITIAL_SESSION') {
+      if (session) {
+        await handleSignIn(session.user);
+      } else {
+        hideLoading();
+      }
+    }
+  });
 }
 
-sb.auth.onAuthStateChange(async (event, session) => {
-  if (event === 'SIGNED_IN'  && session) { await onSignIn(session.user, true); }
-  if (event === 'SIGNED_OUT')             { onSignOut(); }
-});
-
-async function onSignIn(user, fromEvent) {
+// ─────────────────────────────────────────────
+//  SIGN IN / OUT
+// ─────────────────────────────────────────────
+async function handleSignIn(user) {
   currentUser = user;
-  const { data } = await sb.from('profiles').select('*').eq('id', user.id).single();
-  currentProfile = data;
-  userNameEl.textContent   = data?.username || user.email;
-  authBtn.style.display    = 'none';
+
+  // Fetch the profile row
+  const { data: profile, error } = await sb
+    .from('profiles')
+    .select('*')
+    .eq('id', user.id)
+    .single();
+
+  if (error || !profile) {
+    // Profile missing — create it now as a fallback
+    const fallbackUsername = user.email.split('@')[0];
+    const { data: created } = await sb
+      .from('profiles')
+      .insert({ id: user.id, username: fallbackUsername, is_public: false })
+      .select()
+      .single();
+    currentProfile = created;
+  } else {
+    currentProfile = profile;
+  }
+
+  // Update UI
+  userNameEl.textContent    = currentProfile.username;
+  authBtn.style.display     = 'none';
   settingsBtn.style.display = '';
   isOwner = true;
   addBtn.classList.add('visible');
   closeOverlay('auth-overlay');
+
   await loadThoughts(currentProfile.id);
   hideLoading();
 }
 
-function onSignOut() {
-  currentUser = null; currentProfile = null; isOwner = false;
-  userNameEl.textContent = '';
-  authBtn.style.display = ''; authBtn.textContent = 'sign in';
+function handleSignOut() {
+  currentUser = null;
+  currentProfile = null;
+  isOwner = false;
+  userNameEl.textContent    = '';
+  authBtn.style.display     = '';
+  authBtn.textContent       = 'sign in';
   settingsBtn.style.display = 'none';
   addBtn.classList.remove('visible');
-  sky.innerHTML = ''; thoughts = []; tags = new Set();
+  sky.innerHTML = '';
+  thoughts = [];
+  tags = new Set();
   refreshFilterOptions();
+  hideLoading();
 }
 
+// ─────────────────────────────────────────────
+//  LOAD THOUGHTS
+// ─────────────────────────────────────────────
 async function loadThoughts(userId) {
-  sky.innerHTML = ''; thoughts = []; tags = new Set();
-  const { data, error } = await sb.from('thoughts').select('*').eq('user_id', userId).order('date', {ascending:false});
-  if (error) { console.error(error); return; }
+  sky.innerHTML = '';
+  thoughts = [];
+  tags = new Set();
+  const { data, error } = await sb
+    .from('thoughts')
+    .select('*')
+    .eq('user_id', userId)
+    .order('date', { ascending: false });
+  if (error) { console.error('loadThoughts error:', error); return; }
   thoughts = data || [];
   thoughts.forEach(t => tags.add(t.tag));
   thoughts.forEach(makeCloud);
@@ -424,34 +474,47 @@ function switchTab(mode) {
   document.getElementById('tab-login').classList.toggle('active', mode==='login');
   document.getElementById('tab-signup').classList.toggle('active', mode==='signup');
   document.getElementById('signup-extra').style.display = mode==='signup' ? '' : 'none';
-  document.getElementById('auth-title').textContent = mode==='login' ? 'welcome back' : 'create your cloud';
-  document.getElementById('auth-submit').textContent = mode==='login' ? 'sign in' : 'sign up';
-  document.getElementById('auth-error').textContent = '';
+  document.getElementById('auth-title').textContent     = mode==='login' ? 'welcome back' : 'create your cloud';
+  document.getElementById('auth-submit').textContent    = mode==='login' ? 'sign in' : 'sign up';
+  document.getElementById('auth-error').textContent     = '';
 }
 
 authBtn.addEventListener('click', () => openOverlay('auth-overlay'));
-document.getElementById('auth-overlay').addEventListener('click', e => { if(e.target.id==='auth-overlay') closeOverlay('auth-overlay'); });
+document.getElementById('auth-overlay').addEventListener('click', e => {
+  if (e.target.id === 'auth-overlay') closeOverlay('auth-overlay');
+});
 
 document.getElementById('auth-submit').addEventListener('click', async () => {
   const email    = document.getElementById('auth-email').value.trim();
   const password = document.getElementById('auth-password').value;
   const errEl    = document.getElementById('auth-error');
   errEl.textContent = '';
+
   if (!email || !password) { errEl.textContent = 'please fill in all fields'; return; }
 
   if (authMode === 'login') {
     const { error } = await sb.auth.signInWithPassword({ email, password });
     if (error) errEl.textContent = error.message;
+    // onAuthStateChange → SIGNED_IN handles the rest
+
   } else {
     const username = document.getElementById('auth-username').value.trim();
     const isPublic = document.getElementById('auth-public').checked;
     if (!username) { errEl.textContent = 'please choose a username'; return; }
+
+    // Check username availability
     const { data: existing } = await sb.from('profiles').select('id').eq('username', username).maybeSingle();
     if (existing) { errEl.textContent = 'username already taken'; return; }
+
     const { data, error } = await sb.auth.signUp({ email, password });
     if (error) { errEl.textContent = error.message; return; }
-    // Update profile created by trigger
-    await sb.from('profiles').update({ username, is_public: isPublic }).eq('id', data.user.id);
+    if (!data.user) { errEl.textContent = 'sign up failed, please try again'; return; }
+
+    // The trigger creates a default profile row; update it with the chosen username
+    await sb.from('profiles')
+      .update({ username, is_public: isPublic })
+      .eq('id', data.user.id);
+    // onAuthStateChange → SIGNED_IN handles the rest
   }
 });
 
@@ -460,8 +523,8 @@ document.getElementById('auth-submit').addEventListener('click', async () => {
 // ─────────────────────────────────────────────
 settingsBtn.addEventListener('click', async () => {
   if (!currentProfile) return;
-  document.getElementById('set-username').value  = currentProfile.username;
-  document.getElementById('set-public').checked  = currentProfile.is_public;
+  document.getElementById('set-username').value           = currentProfile.username;
+  document.getElementById('set-public').checked           = currentProfile.is_public;
   document.getElementById('set-public-label').textContent = currentProfile.is_public ? 'public profile' : 'private profile';
   updateGrantsSection(currentProfile.is_public);
   await loadGrants();
@@ -475,7 +538,7 @@ document.getElementById('set-public').addEventListener('change', function() {
 
 function updateGrantsSection(isPublic) {
   const gs = document.getElementById('grants-section');
-  gs.style.opacity = isPublic ? '0.4' : '1';
+  gs.style.opacity       = isPublic ? '0.4' : '1';
   gs.style.pointerEvents = isPublic ? 'none' : '';
 }
 
@@ -484,6 +547,7 @@ document.getElementById('settings-save').addEventListener('click', async () => {
   const isPublic = document.getElementById('set-public').checked;
   const errEl    = document.getElementById('settings-error');
   errEl.textContent = '';
+
   if (!username) { errEl.textContent = 'username cannot be empty'; return; }
   if (username !== currentProfile.username) {
     const { data: ex } = await sb.from('profiles').select('id').eq('username', username).maybeSingle();
@@ -498,8 +562,9 @@ document.getElementById('settings-save').addEventListener('click', async () => {
 });
 
 document.getElementById('settings-cancel').addEventListener('click', () => closeOverlay('settings-overlay'));
-document.getElementById('settings-overlay').addEventListener('click', e => { if(e.target.id==='settings-overlay') closeOverlay('settings-overlay'); });
-
+document.getElementById('settings-overlay').addEventListener('click', e => {
+  if (e.target.id === 'settings-overlay') closeOverlay('settings-overlay');
+});
 document.getElementById('signout-btn').addEventListener('click', async () => {
   await sb.auth.signOut();
   closeOverlay('settings-overlay');
@@ -510,7 +575,7 @@ async function loadGrants() {
   const { data } = await sb.from('access_grants').select('*').eq('owner_id', currentProfile.id);
   const list = document.getElementById('grant-list');
   list.innerHTML = '';
-  (data||[]).forEach(g => {
+  (data || []).forEach(g => {
     const item = document.createElement('div');
     item.className = 'grant-item';
     item.innerHTML = `<span>${escHtml(g.grantee_email)}</span><button class="grant-remove" data-id="${g.id}">×</button>`;
@@ -529,8 +594,8 @@ document.getElementById('grant-btn').addEventListener('click', async () => {
   if (!email) return;
   const { error } = await sb.from('access_grants').insert({ owner_id: currentProfile.id, grantee_email: email });
   if (error) { successEl.style.color='#c0513a'; successEl.textContent = error.message; return; }
-  successEl.style.color = '#3a8a5c';
-  successEl.textContent = `${email} can now view your thoughts`;
+  successEl.style.color   = '#3a8a5c';
+  successEl.textContent   = `${email} can now view your thoughts`;
   document.getElementById('grant-email').value = '';
   await loadGrants();
 });
@@ -538,29 +603,56 @@ document.getElementById('grant-btn').addEventListener('click', async () => {
 // ─────────────────────────────────────────────
 //  ADD THOUGHT
 // ─────────────────────────────────────────────
-addBtn.addEventListener('click', () => { if(isOwner) openOverlay('thought-panel-overlay'); });
+addBtn.addEventListener('click', () => { if (isOwner) openOverlay('thought-panel-overlay'); });
 document.getElementById('cancel-btn').addEventListener('click', () => closeOverlay('thought-panel-overlay'));
-document.getElementById('thought-panel-overlay').addEventListener('click', e => { if(e.target.id==='thought-panel-overlay') closeOverlay('thought-panel-overlay'); });
-document.getElementById('input-tag').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('save-btn').click(); });
+document.getElementById('thought-panel-overlay').addEventListener('click', e => {
+  if (e.target.id === 'thought-panel-overlay') closeOverlay('thought-panel-overlay');
+});
+document.getElementById('input-tag').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('save-btn').click();
+});
 
 document.getElementById('save-btn').addEventListener('click', async () => {
+  // Guard: should never fire without a profile but just in case
+  if (!currentProfile) { console.error('save-btn: no currentProfile'); return; }
+
   const text = document.getElementById('input-text').value.trim();
   const tag  = document.getElementById('input-tag').value.trim() || 'thought';
   if (!text) { document.getElementById('input-text').focus(); return; }
+
   const pos = randomPos();
-  const { data, error } = await sb.from('thoughts')
-    .insert({ user_id: currentProfile.id, text, tag, date: new Date().toISOString(), x: pos.x, y: pos.y })
-    .select().single();
-  if (error) { console.error(error); return; }
-  thoughts.push(data); tags.add(data.tag);
+  const { data, error } = await sb
+    .from('thoughts')
+    .insert({
+      user_id: currentProfile.id,
+      text,
+      tag,
+      date: new Date().toISOString(),
+      x: pos.x,
+      y: pos.y
+    })
+    .select()
+    .single();
+
+  if (error) { console.error('insert thought error:', error); return; }
+
+  thoughts.push(data);
+  tags.add(data.tag);
   refreshFilterOptions();
-  if (isTimeline) { renderTimeline(); }
-  else {
+
+  if (isTimeline) {
+    renderTimeline();
+  } else {
     const el = makeCloud(data);
-    el.style.opacity='0'; el.style.transform='scale(0.5)translateY(30px)';
-    el.style.transition='opacity 0.5s,transform 0.5s';
-    requestAnimationFrame(()=>requestAnimationFrame(()=>{ el.style.opacity='1'; el.style.transform=''; }));
+    el.style.opacity    = '0';
+    el.style.transform  = 'scale(0.5)translateY(30px)';
+    el.style.transition = 'opacity 0.5s,transform 0.5s';
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      el.style.opacity   = '1';
+      el.style.transform = '';
+    }));
   }
+
   closeOverlay('thought-panel-overlay');
   document.getElementById('input-text').value = '';
   document.getElementById('input-tag').value  = '';
@@ -571,11 +663,11 @@ document.getElementById('save-btn').addEventListener('click', async () => {
 // ─────────────────────────────────────────────
 function makeCloud(t) {
   const el = document.createElement('div');
-  el.className = 'thought ' + floatClasses[Math.floor(Math.random()*3)];
+  el.className  = 'thought ' + floatClasses[Math.floor(Math.random()*3)];
   el.dataset.id = t.id;
   el.style.left = (t.x ?? randomPos().x) + 'px';
   el.style.top  = (t.y ?? randomPos().y) + 'px';
-  el.innerHTML = `
+  el.innerHTML  = `
     <div class="cloud-wrap">
       <div class="cloud-body">
         <div class="cloud-puff1"></div>
@@ -591,7 +683,7 @@ function makeCloud(t) {
     </div>`;
   if (isOwner) {
     el.addEventListener('mousedown', startDrag);
-    el.addEventListener('touchstart', startDrag, {passive:true});
+    el.addEventListener('touchstart', startDrag, { passive: true });
   } else {
     el.style.cursor = 'default';
   }
@@ -604,31 +696,37 @@ function makeCloud(t) {
 // ─────────────────────────────────────────────
 function startDrag(e) {
   const el = e.currentTarget;
-  el.classList.forEach(c => { if(c.startsWith('float-')) el.classList.remove(c); });
+  el.classList.forEach(c => { if (c.startsWith('float-')) el.classList.remove(c); });
   el.style.zIndex = 50;
   const rect = el.getBoundingClientRect();
   const cx = e.touches ? e.touches[0].clientX : e.clientX;
   const cy = e.touches ? e.touches[0].clientY : e.clientY;
-  dragOffX = cx - rect.left; dragOffY = cy - rect.top;
+  dragOffX = cx - rect.left;
+  dragOffY = cy - rect.top;
   dragging = el;
 }
 document.addEventListener('mousemove', e => {
-  if (!dragging) return; e.preventDefault();
+  if (!dragging) return;
+  e.preventDefault();
   dragging.style.left = (e.clientX - dragOffX) + 'px';
   dragging.style.top  = (e.clientY - dragOffY) + 'px';
 });
 document.addEventListener('touchmove', e => {
-  if (!dragging) return; e.preventDefault();
+  if (!dragging) return;
+  e.preventDefault();
   dragging.style.left = (e.touches[0].clientX - dragOffX) + 'px';
   dragging.style.top  = (e.touches[0].clientY - dragOffY) + 'px';
-}, {passive:false});
+}, { passive: false });
 document.addEventListener('mouseup',  endDrag);
 document.addEventListener('touchend', endDrag);
+
 async function endDrag() {
   if (!dragging) return;
-  const id = dragging.dataset.id, x = parseInt(dragging.style.left), y = parseInt(dragging.style.top);
-  const t = thoughts.find(x => x.id === id);
-  if (t) { t.x = x; t.y = y; await sb.from('thoughts').update({x,y}).eq('id',id); }
+  const id = dragging.dataset.id;
+  const x  = parseInt(dragging.style.left);
+  const y  = parseInt(dragging.style.top);
+  const t  = thoughts.find(t => t.id === id);
+  if (t) { t.x = x; t.y = y; await sb.from('thoughts').update({ x, y }).eq('id', id); }
   dragging.classList.add(floatClasses[Math.floor(Math.random()*3)]);
   dragging.style.zIndex = 10;
   dragging = null;
@@ -637,7 +735,9 @@ async function endDrag() {
 // ─────────────────────────────────────────────
 //  FILTERS + TIMELINE
 // ─────────────────────────────────────────────
-const matches = t => (!activeTag || t.tag.toLowerCase().includes(activeTag.toLowerCase())) && (!activeMonth || monthKey(t.date) === activeMonth);
+const matches = t =>
+  (!activeTag   || t.tag.toLowerCase().includes(activeTag.toLowerCase())) &&
+  (!activeMonth || monthKey(t.date) === activeMonth);
 
 function applyFilters() {
   if (isTimeline) { renderTimeline(); return; }
@@ -665,37 +765,42 @@ sortBtn.addEventListener('click', () => {
 
 function renderTimeline() {
   timelineView.innerHTML = '';
-  const filtered = thoughts.filter(matches).sort((a,b) => new Date(b.date)-new Date(a.date));
+  const filtered = thoughts.filter(matches).sort((a,b) => new Date(b.date) - new Date(a.date));
   emptyMsg.style.display = filtered.length ? 'none' : 'block';
   if (!filtered.length) return;
   const groups = {};
-  filtered.forEach(t => { const k=monthKey(t.date); if(!groups[k]) groups[k]=[]; groups[k].push(t); });
+  filtered.forEach(t => { const k = monthKey(t.date); if (!groups[k]) groups[k]=[]; groups[k].push(t); });
   Object.keys(groups).sort().reverse().forEach(k => {
-    const grp = document.createElement('div'); grp.className='timeline-group';
-    const lbl = document.createElement('div'); lbl.className='timeline-month-label'; lbl.textContent=monthLabel(k);
+    const grp = document.createElement('div'); grp.className = 'timeline-group';
+    const lbl = document.createElement('div'); lbl.className = 'timeline-month-label'; lbl.textContent = monthLabel(k);
     grp.appendChild(lbl);
-    const row = document.createElement('div'); row.className='timeline-row';
+    const row = document.createElement('div'); row.className = 'timeline-row';
     groups[k].forEach(t => {
-      const el = document.createElement('div'); el.className='timeline-cloud';
-      el.innerHTML=`<div class="cloud-wrap"><div class="cloud-body"><div class="cloud-puff1"></div><div class="thought-content"><p class="thought-text">${escHtml(t.text)}</p><div class="thought-meta"><span class="thought-tag">#${escHtml(t.tag)}</span><span class="thought-date">${formatDate(t.date)}</span></div></div></div><div class="cloud-tail"><span></span><span></span><span></span></div></div>`;
+      const el = document.createElement('div'); el.className = 'timeline-cloud';
+      el.innerHTML = `<div class="cloud-wrap"><div class="cloud-body"><div class="cloud-puff1"></div><div class="thought-content"><p class="thought-text">${escHtml(t.text)}</p><div class="thought-meta"><span class="thought-tag">#${escHtml(t.tag)}</span><span class="thought-date">${formatDate(t.date)}</span></div></div></div><div class="cloud-tail"><span></span><span></span><span></span></div></div>`;
       row.appendChild(el);
     });
-    grp.appendChild(row); timelineView.appendChild(grp);
+    grp.appendChild(row);
+    timelineView.appendChild(grp);
   });
 }
 
 function refreshFilterOptions() {
   [filterTagList, document.getElementById('tag-suggestions')].forEach(dl => {
     dl.innerHTML = '';
-    tags.forEach(t => { const o=document.createElement('option'); o.value=t; dl.appendChild(o); });
+    tags.forEach(t => { const o = document.createElement('option'); o.value = t; dl.appendChild(o); });
   });
-  const months = [...new Set(thoughts.map(t=>monthKey(t.date)))].sort().reverse();
+  const months = [...new Set(thoughts.map(t => monthKey(t.date)))].sort().reverse();
   filterMonth.innerHTML = '<option value="">all time</option>';
-  months.forEach(k => { const o=document.createElement('option'); o.value=k; o.textContent=monthLabel(k); filterMonth.appendChild(o); });
+  months.forEach(k => {
+    const o = document.createElement('option'); o.value = k; o.textContent = monthLabel(k);
+    filterMonth.appendChild(o);
+  });
 }
 
-const hideLoading = () => loadingEl.style.display='none';
-
+// ─────────────────────────────────────────────
+//  GO
+// ─────────────────────────────────────────────
 init();
 </script>
 </body>
