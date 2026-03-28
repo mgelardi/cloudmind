@@ -317,8 +317,8 @@ body::before {
 // ─────────────────────────────────────────────
 //  CONFIG — replace with your Supabase values
 // ─────────────────────────────────────────────
-const SUPABASE_URL  = 'https://irslndmtxhovvickocqo.supabase.co';
-const SUPABASE_ANON = 'sb_publishable_aYo1EVAXJdlfs4dshmFmwg_LrBspyn0';
+const SUPABASE_URL  = 'https://YOUR_PROJECT.supabase.co';
+const SUPABASE_ANON = 'YOUR_ANON_KEY';
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
@@ -367,26 +367,16 @@ const closeOverlay = id => document.getElementById(id).classList.remove('open');
 const hideLoading  = () => { loadingEl.style.display='none'; };
 
 // ─────────────────────────────────────────────
-//  BOOT — single entry point, no duplicate calls
+//  BOOT
 // ─────────────────────────────────────────────
 async function init() {
-  // onAuthStateChange fires reliably for both existing sessions and new sign-ins.
-  // We use it as the single source of truth and don't call onSignIn from anywhere else.
   sb.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'SIGNED_IN' && session) {
-      await handleSignIn(session.user);
-    }
-    if (event === 'SIGNED_OUT') {
-      handleSignOut();
-    }
-    // INITIAL_SESSION fires once on page load with the existing session (or null).
     if (event === 'INITIAL_SESSION') {
-      if (session) {
-        await handleSignIn(session.user);
-      } else {
-        hideLoading();
-      }
+      if (session) await handleSignIn(session.user);
+      else hideLoading();
     }
+    if (event === 'SIGNED_IN')  await handleSignIn(session.user);
+    if (event === 'SIGNED_OUT') handleSignOut();
   });
 }
 
@@ -394,9 +384,11 @@ async function init() {
 //  SIGN IN / OUT
 // ─────────────────────────────────────────────
 async function handleSignIn(user) {
+  // Avoid re-running if already loaded for this user
+  if (currentProfile && currentProfile.id === user.id) { hideLoading(); return; }
+
   currentUser = user;
 
-  // Fetch the profile row
   const { data: profile, error } = await sb
     .from('profiles')
     .select('*')
@@ -404,19 +396,12 @@ async function handleSignIn(user) {
     .single();
 
   if (error || !profile) {
-    // Profile missing — create it now as a fallback
-    const fallbackUsername = user.email.split('@')[0];
-    const { data: created } = await sb
-      .from('profiles')
-      .insert({ id: user.id, username: fallbackUsername, is_public: false })
-      .select()
-      .single();
-    currentProfile = created;
-  } else {
-    currentProfile = profile;
+    console.error('Profile not found for user:', user.id, error);
+    hideLoading();
+    return;
   }
 
-  // Update UI
+  currentProfile = profile;
   userNameEl.textContent    = currentProfile.username;
   authBtn.style.display     = 'none';
   settingsBtn.style.display = '';
@@ -429,9 +414,9 @@ async function handleSignIn(user) {
 }
 
 function handleSignOut() {
-  currentUser = null;
+  currentUser    = null;
   currentProfile = null;
-  isOwner = false;
+  isOwner        = false;
   userNameEl.textContent    = '';
   authBtn.style.display     = '';
   authBtn.textContent       = 'sign in';
@@ -439,7 +424,7 @@ function handleSignOut() {
   addBtn.classList.remove('visible');
   sky.innerHTML = '';
   thoughts = [];
-  tags = new Set();
+  tags     = new Set();
   refreshFilterOptions();
   hideLoading();
 }
@@ -450,7 +435,7 @@ function handleSignOut() {
 async function loadThoughts(userId) {
   sky.innerHTML = '';
   thoughts = [];
-  tags = new Set();
+  tags     = new Set();
   const { data, error } = await sb
     .from('thoughts')
     .select('*')
@@ -485,7 +470,6 @@ document.getElementById('auth-overlay').addEventListener('click', e => {
 });
 
 document.getElementById('auth-submit').addEventListener('click', async () => {
-  console.log('AUTH SUBMIT CLICKED, mode:', authMode); // add this
   const email    = document.getElementById('auth-email').value.trim();
   const password = document.getElementById('auth-password').value;
   const errEl    = document.getElementById('auth-error');
@@ -496,33 +480,35 @@ document.getElementById('auth-submit').addEventListener('click', async () => {
   if (authMode === 'login') {
     const { error } = await sb.auth.signInWithPassword({ email, password });
     if (error) errEl.textContent = error.message;
-    // onAuthStateChange → SIGNED_IN handles the rest
 
   } else {
     const username = document.getElementById('auth-username').value.trim();
     const isPublic = document.getElementById('auth-public').checked;
     if (!username) { errEl.textContent = 'please choose a username'; return; }
 
-    // Check username availability
-    const { data: existing, error: checkErr } = await sb.from('profiles').select('id').eq('username', username).maybeSingle();
-    if (checkErr) { errEl.textContent = checkErr.message; return; }
+    // Check username availability — profiles are publicly readable so this works unauthed
+    const { data: existing } = await sb
+      .from('profiles').select('id').eq('username', username).maybeSingle();
     if (existing) { errEl.textContent = 'username already taken'; return; }
 
-    // Create the auth user
-    const { data, error } = await sb.auth.signUp({ email, password });
-    if (error) { errEl.textContent = error.message; return; }
-    if (!data.user) { errEl.textContent = 'sign up failed, please try again'; return; }
+    // Create auth user
+    const { data: signUpData, error: signUpErr } = await sb.auth.signUp({ email, password });
+    if (signUpErr)        { errEl.textContent = signUpErr.message; return; }
+    if (!signUpData.user) { errEl.textContent = 'sign up failed, please try again'; return; }
 
-    // Sign in immediately so we have an authenticated session
+    // Sign in right away to get an active session
     const { error: signInErr } = await sb.auth.signInWithPassword({ email, password });
     if (signInErr) { errEl.textContent = signInErr.message; return; }
 
-    // Now create the profile row ourselves (no trigger needed)
-    const { error: profileErr } = await sb.from('profiles')
-      .insert({ id: data.user.id, username, is_public: isPublic });
+    // Insert profile row — session is now active so RLS passes
+    const { error: profileErr } = await sb.from('profiles').insert({
+      id:        signUpData.user.id,
+      email:     email,
+      username:  username,
+      is_public: isPublic
+    });
     if (profileErr) { errEl.textContent = profileErr.message; return; }
-
-    // onAuthStateChange → SIGNED_IN takes it from here
+    // SIGNED_IN event fires from signInWithPassword → handleSignIn loads everything
   }
 });
 
@@ -561,7 +547,9 @@ document.getElementById('settings-save').addEventListener('click', async () => {
     const { data: ex } = await sb.from('profiles').select('id').eq('username', username).maybeSingle();
     if (ex) { errEl.textContent = 'username already taken'; return; }
   }
-  const { error } = await sb.from('profiles').update({ username, is_public: isPublic }).eq('id', currentProfile.id);
+  const { error } = await sb.from('profiles')
+    .update({ username, is_public: isPublic })
+    .eq('id', currentProfile.id);
   if (error) { errEl.textContent = error.message; return; }
   currentProfile.username  = username;
   currentProfile.is_public = isPublic;
@@ -600,10 +588,11 @@ document.getElementById('grant-btn').addEventListener('click', async () => {
   const successEl = document.getElementById('grant-success');
   successEl.textContent = '';
   if (!email) return;
-  const { error } = await sb.from('access_grants').insert({ owner_id: currentProfile.id, grantee_email: email });
+  const { error } = await sb.from('access_grants')
+    .insert({ owner_id: currentProfile.id, grantee_email: email });
   if (error) { successEl.style.color='#c0513a'; successEl.textContent = error.message; return; }
-  successEl.style.color   = '#3a8a5c';
-  successEl.textContent   = `${email} can now view your thoughts`;
+  successEl.style.color = '#3a8a5c';
+  successEl.textContent = `${email} can now view your thoughts`;
   document.getElementById('grant-email').value = '';
   await loadGrants();
 });
@@ -621,7 +610,6 @@ document.getElementById('input-tag').addEventListener('keydown', e => {
 });
 
 document.getElementById('save-btn').addEventListener('click', async () => {
-  // Guard: should never fire without a profile but just in case
   if (!currentProfile) { console.error('save-btn: no currentProfile'); return; }
 
   const text = document.getElementById('input-text').value.trim();
@@ -631,14 +619,7 @@ document.getElementById('save-btn').addEventListener('click', async () => {
   const pos = randomPos();
   const { data, error } = await sb
     .from('thoughts')
-    .insert({
-      user_id: currentProfile.id,
-      text,
-      tag,
-      date: new Date().toISOString(),
-      x: pos.x,
-      y: pos.y
-    })
+    .insert({ user_id: currentProfile.id, text, tag, date: new Date().toISOString(), x: pos.x, y: pos.y })
     .select()
     .single();
 
@@ -707,21 +688,17 @@ function startDrag(e) {
   el.classList.forEach(c => { if (c.startsWith('float-')) el.classList.remove(c); });
   el.style.zIndex = 50;
   const rect = el.getBoundingClientRect();
-  const cx = e.touches ? e.touches[0].clientX : e.clientX;
-  const cy = e.touches ? e.touches[0].clientY : e.clientY;
-  dragOffX = cx - rect.left;
-  dragOffY = cy - rect.top;
+  dragOffX = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+  dragOffY = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
   dragging = el;
 }
 document.addEventListener('mousemove', e => {
-  if (!dragging) return;
-  e.preventDefault();
+  if (!dragging) return; e.preventDefault();
   dragging.style.left = (e.clientX - dragOffX) + 'px';
   dragging.style.top  = (e.clientY - dragOffY) + 'px';
 });
 document.addEventListener('touchmove', e => {
-  if (!dragging) return;
-  e.preventDefault();
+  if (!dragging) return; e.preventDefault();
   dragging.style.left = (e.touches[0].clientX - dragOffX) + 'px';
   dragging.style.top  = (e.touches[0].clientY - dragOffY) + 'px';
 }, { passive: false });
