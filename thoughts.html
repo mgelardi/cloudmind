@@ -503,22 +503,26 @@ document.getElementById('auth-submit').addEventListener('click', async () => {
     const isPublic = document.getElementById('auth-public').checked;
     if (!username) { errEl.textContent = 'please choose a username'; return; }
 
-    console.log('1. checking username...');
+    // Check username availability
     const { data: existing, error: checkErr } = await sb.from('profiles').select('id').eq('username', username).maybeSingle();
-    console.log('2. username check result:', existing, checkErr);
+    if (checkErr) { errEl.textContent = checkErr.message; return; }
     if (existing) { errEl.textContent = 'username already taken'; return; }
 
-    console.log('3. calling signUp...');
+    // Create the auth user
     const { data, error } = await sb.auth.signUp({ email, password });
-    console.log('4. signUp result:', data, error);
     if (error) { errEl.textContent = error.message; return; }
     if (!data.user) { errEl.textContent = 'sign up failed, please try again'; return; }
 
-    console.log('5. updating profile...');
-    const { error: updateErr } = await sb.from('profiles')
-      .update({ username, is_public: isPublic })
-      .eq('id', data.user.id);
-    console.log('6. profile update result:', updateErr);
+    // Sign in immediately so we have an authenticated session
+    const { error: signInErr } = await sb.auth.signInWithPassword({ email, password });
+    if (signInErr) { errEl.textContent = signInErr.message; return; }
+
+    // Now create the profile row ourselves (no trigger needed)
+    const { error: profileErr } = await sb.from('profiles')
+      .insert({ id: data.user.id, username, is_public: isPublic });
+    if (profileErr) { errEl.textContent = profileErr.message; return; }
+
+    // onAuthStateChange → SIGNED_IN takes it from here
   }
 });
 
