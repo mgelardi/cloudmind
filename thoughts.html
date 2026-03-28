@@ -485,6 +485,7 @@ document.getElementById('auth-overlay').addEventListener('click', e => {
 });
 
 document.getElementById('auth-submit').addEventListener('click', async () => {
+  console.log('AUTH SUBMIT CLICKED, mode:', authMode); // add this
   const email    = document.getElementById('auth-email').value.trim();
   const password = document.getElementById('auth-password').value;
   const errEl    = document.getElementById('auth-error');
