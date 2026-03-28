@@ -502,19 +502,22 @@ document.getElementById('auth-submit').addEventListener('click', async () => {
     const isPublic = document.getElementById('auth-public').checked;
     if (!username) { errEl.textContent = 'please choose a username'; return; }
 
-    // Check username availability
-    const { data: existing } = await sb.from('profiles').select('id').eq('username', username).maybeSingle();
+    console.log('1. checking username...');
+    const { data: existing, error: checkErr } = await sb.from('profiles').select('id').eq('username', username).maybeSingle();
+    console.log('2. username check result:', existing, checkErr);
     if (existing) { errEl.textContent = 'username already taken'; return; }
 
+    console.log('3. calling signUp...');
     const { data, error } = await sb.auth.signUp({ email, password });
+    console.log('4. signUp result:', data, error);
     if (error) { errEl.textContent = error.message; return; }
     if (!data.user) { errEl.textContent = 'sign up failed, please try again'; return; }
 
-    // The trigger creates a default profile row; update it with the chosen username
-    await sb.from('profiles')
+    console.log('5. updating profile...');
+    const { error: updateErr } = await sb.from('profiles')
       .update({ username, is_public: isPublic })
       .eq('id', data.user.id);
-    // onAuthStateChange → SIGNED_IN handles the rest
+    console.log('6. profile update result:', updateErr);
   }
 });
 
