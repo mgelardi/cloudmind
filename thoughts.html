@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cloudmind</title>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;1,400&family=Caveat:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --sky: #d4e9f7;
+  --cloud-white: rgba(255,255,255,0.92);
+  --cloud-shadow: rgba(160,200,230,0.35);
+  --ink: #2a3a4a;
+  --tag-bg: rgba(100,170,220,0.22);
+  --tag-color: #1a5c8a;
+  --accent: #e07a5f;
+  --muted: #6a8a9a;
+  --panel-bg: rgba(255,255,255,0.88);
+}
+html, body { width:100%; height:100%; overflow:hidden; font-family:'Lora',Georgia,serif; background:var(--sky); color:var(--ink); cursor:default; user-select:none; }
+body::before {
+  content:''; position:fixed; inset:0;
+  background:
+    radial-gradient(ellipse at 20% 30%,#c3dff7 0%,transparent 55%),
+    radial-gradient(ellipse at 80% 70%,#b5d8f5 0%,transparent 55%),
+    linear-gradient(180deg,#e8f4fd 0%,#c5e3f5 60%,#a8cfec 100%);
+  z-index:0;
+}
+.bg-cloud { position:fixed; border-radius:50%; background:rgba(255,255,255,0.3); filter:blur(40px); pointer-events:none; z-index:1; }
+
+/* ── FILTER BAR ── */
+#filter-bar {
+  position:fixed; top:16px; left:50%; transform:translateX(-50%);
+  z-index:80; display:flex; align-items:center; gap:8px;
+  background:rgba(255,255,255,0.72); backdrop-filter:blur(14px);
+  border:1px solid rgba(255,255,255,0.85); border-radius:40px;
+  padding:7px 14px; box-shadow:0 4px 20px rgba(80,140,200,0.14);
+}
+#filter-bar input, #filter-bar select {
+  border:none; background:transparent;
+  font-family:'Lora',serif; font-size:12px; color:var(--ink); outline:none; cursor:pointer;
+}
+#filter-bar input { width:110px; }
+#filter-bar input::placeholder { color:var(--muted); font-style:italic; }
+#filter-bar select { color:var(--muted); max-width:130px; }
+.filter-divider { width:1px; height:16px; background:rgba(100,160,210,0.25); flex-shrink:0; }
+#sort-btn {
+  display:flex; align-items:center; gap:5px; border:none; background:transparent;
+  font-family:'Lora',serif; font-size:12px; color:var(--muted); cursor:pointer;
+  padding:0 2px; transition:color 0.15s; white-space:nowrap;
+}
+#sort-btn:hover, #sort-btn.active { color:var(--tag-color); }
+#sort-btn.active { font-weight:500; }
+
+/* ── SKY / TIMELINE ── */
+#sky { position:fixed; inset:0; z-index:2; overflow:hidden; }
+#timeline-view {
+  position:fixed; inset:0; z-index:3; overflow-y:auto; overflow-x:hidden;
+  display:none; padding:90px 0 80px;
+}
+#timeline-view.active { display:block; }
+.timeline-group { position:relative; padding:0 0 36px; }
+.timeline-month-label {
+  position:sticky; top:80px; left:24px; display:inline-block;
+  font-family:'Lora',serif; font-size:12px; font-style:italic;
+  color:rgba(30,80,130,0.5); background:rgba(210,233,248,0.75);
+  backdrop-filter:blur(8px); padding:3px 14px; border-radius:20px;
+  margin-left:24px; margin-bottom:12px; letter-spacing:0.04em;
+}
+.timeline-row { display:flex; flex-wrap:wrap; gap:20px 16px; padding:0 28px; }
+.timeline-cloud { position:relative; cursor:default; flex-shrink:0; }
+.timeline-cloud .cloud-body { min-width:150px; max-width:220px; }
+.timeline-cloud:hover .cloud-body {
+  box-shadow:0 14px 44px rgba(100,160,210,0.38),0 4px 12px rgba(120,170,210,0.22),inset 0 1px 0 rgba(255,255,255,0.9);
+  transform:translateY(-3px) scale(1.015);
+}
+
+/* ── CLOUD ── */
+.thought { position:absolute; cursor:grab; z-index:10; }
+.thought:active { cursor:grabbing; }
+.thought.filtered-out { opacity:0.08; pointer-events:none; transition:opacity 0.3s; }
+.thought.filtered-in  { opacity:1; transition:opacity 0.3s; }
+.cloud-wrap { position:relative; display:flex; align-items:center; justify-content:center; }
+.cloud-body {
+  position:relative; background:var(--cloud-white); border-radius:50px;
+  padding:18px 22px; min-width:160px; max-width:240px;
+  box-shadow:0 8px 32px var(--cloud-shadow),0 2px 8px rgba(120,170,210,0.18),inset 0 1px 0 rgba(255,255,255,0.9);
+  transition:box-shadow 0.2s, transform 0.2s;
+}
+.cloud-body::before, .cloud-body::after, .cloud-puff1 {
+  content:''; position:absolute; background:var(--cloud-white);
+  border-radius:50%; box-shadow:0 4px 14px var(--cloud-shadow);
+}
+.cloud-body::before { width:65px; height:55px; top:-28px; left:22px; }
+.cloud-body::after  { width:50px; height:42px; top:-20px; right:28px; }
+.cloud-puff1        { width:42px; height:38px; top:-16px; left:60px; }
+.thought:hover .cloud-body {
+  box-shadow:0 14px 44px rgba(100,160,210,0.38),0 4px 12px rgba(120,170,210,0.22),inset 0 1px 0 rgba(255,255,255,0.9);
+  transform:translateY(-3px) scale(1.015);
+}
+.cloud-tail { position:absolute; bottom:-18px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:3px; }
+.cloud-tail span { display:block; background:rgba(255,255,255,0.8); border-radius:50%; box-shadow:0 2px 6px var(--cloud-shadow); }
+.cloud-tail span:nth-child(1){width:12px;height:12px;}
+.cloud-tail span:nth-child(2){width:8px;height:8px;}
+.cloud-tail span:nth-child(3){width:5px;height:5px;}
+.thought-content { position:relative; z-index:1; text-align:center; }
+.thought-text { font-family:'Caveat',cursive; font-size:15.5px; font-weight:500; line-height:1.45; color:var(--ink); margin-bottom:8px; word-break:break-word; }
+.thought-meta { display:flex; align-items:center; justify-content:center; gap:6px; flex-wrap:wrap; }
+.thought-tag { font-family:'Lora',serif; font-size:10px; font-weight:500; letter-spacing:0.06em; text-transform:uppercase; background:var(--tag-bg); color:var(--tag-color); border-radius:20px; padding:2px 8px; }
+.thought-date { font-family:'Lora',serif; font-size:9.5px; color:var(--muted); font-style:italic; }
+
+@keyframes float1{0%,100%{transform:translateY(0)rotate(0)}33%{transform:translateY(-10px)rotate(.5deg)}66%{transform:translateY(-5px)rotate(-.5deg)}}
+@keyframes float2{0%,100%{transform:translateY(0)rotate(0)}40%{transform:translateY(-14px)rotate(-.7deg)}70%{transform:translateY(-6px)rotate(.4deg)}}
+@keyframes float3{0%,100%{transform:translateY(0)rotate(0)}25%{transform:translateY(-8px)rotate(.6deg)}75%{transform:translateY(-12px)rotate(-.3deg)}}
+.float-1{animation:float1 6s ease-in-out infinite}
+.float-2{animation:float2 7.5s ease-in-out infinite}
+.float-3{animation:float3 8.5s ease-in-out infinite}
+
+/* ── USER CORNER ── */
+#site-title { position:fixed; top:22px; left:28px; z-index:50; pointer-events:none; }
+#site-title h1 { font-family:'Lora',serif; font-size:22px; font-weight:400; font-style:italic; color:rgba(30,70,110,0.6); }
+#site-title p  { font-size:11px; color:rgba(60,100,140,0.5); letter-spacing:0.05em; margin-top:2px; }
+#user-corner { position:fixed; top:16px; right:20px; z-index:90; display:flex; align-items:center; gap:8px; }
+#user-name { font-family:'Lora',serif; font-size:12px; font-style:italic; color:rgba(30,70,110,0.65); }
+.corner-btn {
+  border:1.5px solid rgba(100,160,210,0.35); background:rgba(255,255,255,0.7);
+  backdrop-filter:blur(8px); border-radius:20px; padding:5px 14px;
+  font-family:'Lora',serif; font-size:11.5px; color:var(--tag-color);
+  cursor:pointer; transition:background 0.15s, transform 0.15s;
+}
+.corner-btn:hover { background:rgba(255,255,255,0.92); transform:translateY(-1px); }
+
+/* ── ADD BUTTON ── */
+#add-btn {
+  position:fixed; bottom:32px; right:32px; z-index:100;
+  width:54px; height:54px; border-radius:50%; border:none;
+  background:linear-gradient(135deg,#5aafde,#3d8abf); color:#fff;
+  font-size:26px; cursor:pointer; display:none;
+  box-shadow:0 6px 24px rgba(60,130,190,0.38);
+  transition:transform 0.18s, box-shadow 0.18s;
+  align-items:center; justify-content:center;
+}
+#add-btn.visible { display:flex; }
+#add-btn:hover { transform:scale(1.1)rotate(90deg); box-shadow:0 10px 32px rgba(60,130,190,0.5); }
+
+/* ── PANELS ── */
+.overlay {
+  position:fixed; inset:0; background:rgba(100,150,190,0.18);
+  backdrop-filter:blur(3px); z-index:200; display:none;
+  align-items:center; justify-content:center;
+}
+.overlay.open { display:flex; }
+.panel {
+  background:var(--panel-bg); border-radius:24px; padding:32px 28px 28px;
+  width:360px; max-width:92vw;
+  box-shadow:0 20px 60px rgba(40,90,140,0.22),0 2px 8px rgba(0,0,0,0.08);
+  backdrop-filter:blur(12px); border:1px solid rgba(255,255,255,0.75);
+  animation:panelIn 0.28s cubic-bezier(.34,1.56,.64,1);
+}
+@keyframes panelIn{from{opacity:0;transform:scale(0.88)translateY(16px)}to{opacity:1;transform:scale(1)translateY(0)}}
+.panel h2 { font-family:'Lora',serif; font-size:18px; font-weight:500; color:var(--ink); margin-bottom:20px; }
+.panel-tabs { display:flex; margin-bottom:22px; border-radius:12px; overflow:hidden; border:1.5px solid rgba(100,170,220,0.2); }
+.tab-btn { flex:1; padding:8px; border:none; background:transparent; font-family:'Lora',serif; font-size:13px; color:var(--muted); cursor:pointer; transition:background 0.15s, color 0.15s; }
+.tab-btn.active { background:rgba(90,175,222,0.15); color:var(--tag-color); font-weight:500; }
+.field { margin-bottom:14px; }
+.field label { display:block; font-family:'Lora',serif; font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:5px; }
+.field input, .field textarea {
+  width:100%; padding:9px 12px;
+  border:1.5px solid rgba(100,170,220,0.3); border-radius:12px;
+  background:rgba(255,255,255,0.85);
+  font-family:'Caveat',cursive; font-size:15px; color:var(--ink);
+  outline:none; resize:none; transition:border-color 0.15s, box-shadow 0.15s;
+}
+.field input:focus, .field textarea:focus { border-color:rgba(80,150,210,0.5); box-shadow:0 0 0 3px rgba(80,150,210,0.1); }
+.field textarea { height:80px; }
+.toggle-wrap { display:flex; align-items:center; gap:8px; }
+.toggle { position:relative; width:36px; height:20px; }
+.toggle input { opacity:0; width:0; height:0; }
+.toggle-slider { position:absolute; inset:0; background:rgba(100,160,200,0.2); border-radius:20px; cursor:pointer; transition:background 0.2s; }
+.toggle-slider::before { content:''; position:absolute; width:14px; height:14px; background:#fff; border-radius:50%; left:3px; top:3px; box-shadow:0 1px 4px rgba(0,0,0,0.15); transition:transform 0.2s; }
+.toggle input:checked + .toggle-slider { background:rgba(90,175,222,0.7); }
+.toggle input:checked + .toggle-slider::before { transform:translateX(16px); }
+.toggle-label { font-family:'Lora',serif; font-size:12px; color:var(--muted); }
+.panel-actions { display:flex; gap:10px; margin-top:20px; }
+.btn { flex:1; padding:10px; border-radius:12px; border:none; font-family:'Lora',serif; font-size:13px; cursor:pointer; transition:transform 0.15s, opacity 0.15s; }
+.btn:hover { opacity:0.88; transform:translateY(-1px); }
+.btn-primary { background:linear-gradient(135deg,#5aafde,#3d8abf); color:#fff; font-weight:500; }
+.btn-ghost   { background:rgba(100,170,220,0.12); color:var(--muted); }
+.btn-danger  { background:rgba(224,122,95,0.15); color:#c0513a; }
+.error-msg   { font-family:'Lora',serif; font-size:12px; color:#c0513a; font-style:italic; margin-top:8px; min-height:18px; }
+.success-msg { font-family:'Lora',serif; font-size:12px; color:#3a8a5c; font-style:italic; margin-top:8px; min-height:18px; }
+.section-title { font-family:'Lora',serif; font-size:12px; font-weight:500; color:var(--muted); text-transform:uppercase; letter-spacing:0.07em; margin:18px 0 10px; }
+.grant-list { display:flex; flex-direction:column; gap:6px; max-height:140px; overflow-y:auto; margin-top:8px; }
+.grant-item { display:flex; align-items:center; justify-content:space-between; background:rgba(100,170,220,0.1); border-radius:10px; padding:6px 10px; }
+.grant-item span { font-family:'Lora',serif; font-size:12px; color:var(--ink); }
+.grant-remove { border:none; background:none; color:var(--accent); font-size:16px; cursor:pointer; line-height:1; }
+.field-row { display:flex; align-items:center; gap:8px; }
+.field-row .field { flex:1; margin:0; }
+
+/* ── MISC ── */
+#empty-msg { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); font-family:'Lora',serif; font-size:14px; font-style:italic; color:rgba(30,80,130,0.4); pointer-events:none; z-index:4; display:none; text-align:center; }
+#hint { position:fixed; bottom:30px; left:50%; transform:translateX(-50%); font-family:'Lora',serif; font-size:11.5px; font-style:italic; color:rgba(30,80,130,0.45); pointer-events:none; z-index:5; white-space:nowrap; transition:opacity 0.6s; }
+#loading { position:fixed; inset:0; z-index:500; display:flex; align-items:center; justify-content:center; background:rgba(210,233,248,0.85); backdrop-filter:blur(4px); }
+#loading p { font-family:'Lora',serif; font-size:14px; font-style:italic; color:rgba(30,80,130,0.6); }
+</style>
+</head>
+<body>
+
+<div class="bg-cloud" style="width:320px;height:180px;top:5%;left:8%"></div>
+<div class="bg-cloud" style="width:250px;height:140px;top:12%;right:12%"></div>
+<div class="bg-cloud" style="width:400px;height:200px;bottom:15%;left:20%"></div>
+<div class="bg-cloud" style="width:200px;height:120px;bottom:20%;right:8%"></div>
+
+<div id="loading"><p>drifting in…</p></div>
+
+<div id="site-title"><h1>Cloudmind</h1><p>your thoughts, floating free</p></div>
+
+<div id="user-corner">
+  <span id="user-name"></span>
+  <button class="corner-btn" id="auth-btn">sign in</button>
+  <button class="corner-btn" id="settings-btn" style="display:none">settings</button>
+</div>
+
+<div id="filter-bar">
+  <input id="filter-tag" type="text" placeholder="filter by tag…" list="filter-tag-list" autocomplete="off">
+  <datalist id="filter-tag-list"></datalist>
+  <div class="filter-divider"></div>
+  <select id="filter-month"><option value="">all time</option></select>
+  <div class="filter-divider"></div>
+  <button id="sort-btn">
+    <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M1 3h11M1 6.5h7M1 10h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+    timeline
+  </button>
+</div>
+
+<div id="sky"></div>
+<div id="timeline-view"></div>
+<p id="empty-msg">no thoughts here yet ☁️</p>
+<button id="add-btn" title="New thought">+</button>
+<p id="hint">drag clouds · click + to add a thought</p>
+
+<!-- ── AUTH PANEL ── -->
+<div class="overlay" id="auth-overlay">
+  <div class="panel">
+    <h2 id="auth-title">welcome to cloudmind</h2>
+    <div class="panel-tabs">
+      <button class="tab-btn active" id="tab-login" onclick="switchTab('login')">sign in</button>
+      <button class="tab-btn" id="tab-signup" onclick="switchTab('signup')">sign up</button>
+    </div>
+    <div class="field"><label>email</label><input id="auth-email" type="email" placeholder="you@example.com"></div>
+    <div class="field"><label>password</label><input id="auth-password" type="password" placeholder="••••••••"></div>
+    <div id="signup-extra" style="display:none">
+      <div class="field"><label>username</label><input id="auth-username" type="text" placeholder="your handle"></div>
+      <div class="field">
+        <div class="toggle-wrap">
+          <label class="toggle"><input type="checkbox" id="auth-public"><span class="toggle-slider"></span></label>
+          <span class="toggle-label">public profile — anyone can view your thoughts</span>
+        </div>
+      </div>
+    </div>
+    <div class="error-msg" id="auth-error"></div>
+    <div class="panel-actions">
+      <button class="btn btn-primary" id="auth-submit">sign in</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADD THOUGHT PANEL ── -->
+<div class="overlay" id="thought-panel-overlay">
+  <div class="panel">
+    <h2>a new thought ☁️</h2>
+    <div class="field"><label>the thought</label><textarea id="input-text" placeholder="What's drifting through your mind…"></textarea></div>
+    <div class="field"><label>tag</label><input id="input-tag" type="text" placeholder="e.g. idea, memory, question…" list="tag-suggestions"><datalist id="tag-suggestions"></datalist></div>
+    <div class="panel-actions">
+      <button class="btn btn-ghost" id="cancel-btn">cancel</button>
+      <button class="btn btn-primary" id="save-btn">let it float ↑</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── SETTINGS PANEL ── -->
+<div class="overlay" id="settings-overlay">
+  <div class="panel" style="max-height:85vh;overflow-y:auto">
+    <h2>settings</h2>
+    <div class="section-title">profile</div>
+    <div class="field"><label>username</label><input id="set-username" type="text"></div>
+    <div class="field">
+      <div class="toggle-wrap">
+        <label class="toggle"><input type="checkbox" id="set-public"><span class="toggle-slider"></span></label>
+        <span class="toggle-label" id="set-public-label">private profile</span>
+      </div>
+    </div>
+    <div id="grants-section">
+      <div class="section-title">view access (private mode only)</div>
+      <div class="field-row">
+        <div class="field"><input id="grant-email" type="email" placeholder="invite by email…"></div>
+        <button class="btn btn-primary" id="grant-btn" style="flex:0;padding:9px 14px;white-space:nowrap;margin-top:0">invite</button>
+      </div>
+      <div class="success-msg" id="grant-success"></div>
+      <div class="grant-list" id="grant-list"></div>
+    </div>
+    <div class="section-title">account</div>
+    <div class="error-msg" id="settings-error"></div>
+    <div class="panel-actions">
+      <button class="btn btn-ghost" id="settings-cancel">close</button>
+      <button class="btn btn-primary" id="settings-save">save changes</button>
+    </div>
+    <div class="panel-actions" style="margin-top:8px">
+      <button class="btn btn-danger" id="signout-btn">sign out</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+//  CONFIG — replace with your Supabase values
+// ─────────────────────────────────────────────
+const SUPABASE_URL  = 'https://YOUR_PROJECT.supabase.co';
+const SUPABASE_ANON = 'YOUR_ANON_KEY';
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+// ─────────────────────────────────────────────
+//  STATE
+// ─────────────────────────────────────────────
+let currentUser    = null;
+let currentProfile = null;
+let thoughts       = [];
+let tags           = new Set();
+let dragging       = null, dragOffX = 0, dragOffY = 0;
+let isTimeline     = false;
+let activeTag      = '';
+let activeMonth    = '';
+let isOwner        = false;
+
+const floatClasses = ['float-1','float-2','float-3'];
+
+// ─────────────────────────────────────────────
+//  DOM REFS
+// ─────────────────────────────────────────────
+const sky            = document.getElementById('sky');
+const timelineView   = document.getElementById('timeline-view');
+const emptyMsg       = document.getElementById('empty-msg');
+const hint           = document.getElementById('hint');
+const addBtn         = document.getElementById('add-btn');
+const authBtn        = document.getElementById('auth-btn');
+const settingsBtn    = document.getElementById('settings-btn');
+const userNameEl     = document.getElementById('user-name');
+const loadingEl      = document.getElementById('loading');
+const filterTagInput = document.getElementById('filter-tag');
+const filterTagList  = document.getElementById('filter-tag-list');
+const filterMonth    = document.getElementById('filter-month');
+const sortBtn        = document.getElementById('sort-btn');
+
+// ─────────────────────────────────────────────
+//  UTILS
+// ─────────────────────────────────────────────
+const escHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const formatDate = iso => new Date(iso).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+const monthKey   = iso => { const d=new Date(iso); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
+const monthLabel = key => { const [y,m]=key.split('-'); return new Date(+y,+m-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'}); };
+const randomPos  = () => ({ x: 60+Math.random()*(window.innerWidth-280-120), y: 60+Math.random()*(window.innerHeight-180-120) });
+const openOverlay  = id => document.getElementById(id).classList.add('open');
+const closeOverlay = id => document.getElementById(id).classList.remove('open');
+
+// ─────────────────────────────────────────────
+//  BOOT
+// ─────────────────────────────────────────────
+async function init() {
+  const { data:{ session } } = await sb.auth.getSession();
+  if (session) await onSignIn(session.user, false);
+  else hideLoading();
+}
+
+sb.auth.onAuthStateChange(async (event, session) => {
+  if (event === 'SIGNED_IN'  && session) { await onSignIn(session.user, true); }
+  if (event === 'SIGNED_OUT')             { onSignOut(); }
+});
+
+async function onSignIn(user, fromEvent) {
+  currentUser = user;
+  const { data } = await sb.from('profiles').select('*').eq('id', user.id).single();
+  currentProfile = data;
+  userNameEl.textContent   = data?.username || user.email;
+  authBtn.style.display    = 'none';
+  settingsBtn.style.display = '';
+  isOwner = true;
+  addBtn.classList.add('visible');
+  closeOverlay('auth-overlay');
+  await loadThoughts(currentProfile.id);
+  hideLoading();
+}
+
+function onSignOut() {
+  currentUser = null; currentProfile = null; isOwner = false;
+  userNameEl.textContent = '';
+  authBtn.style.display = ''; authBtn.textContent = 'sign in';
+  settingsBtn.style.display = 'none';
+  addBtn.classList.remove('visible');
+  sky.innerHTML = ''; thoughts = []; tags = new Set();
+  refreshFilterOptions();
+}
+
+async function loadThoughts(userId) {
+  sky.innerHTML = ''; thoughts = []; tags = new Set();
+  const { data, error } = await sb.from('thoughts').select('*').eq('user_id', userId).order('date', {ascending:false});
+  if (error) { console.error(error); return; }
+  thoughts = data || [];
+  thoughts.forEach(t => tags.add(t.tag));
+  thoughts.forEach(makeCloud);
+  refreshFilterOptions();
+  applyFilters();
+}
+
+// ─────────────────────────────────────────────
+//  AUTH PANEL
+// ─────────────────────────────────────────────
+let authMode = 'login';
+
+function switchTab(mode) {
+  authMode = mode;
+  document.getElementById('tab-login').classList.toggle('active', mode==='login');
+  document.getElementById('tab-signup').classList.toggle('active', mode==='signup');
+  document.getElementById('signup-extra').style.display = mode==='signup' ? '' : 'none';
+  document.getElementById('auth-title').textContent = mode==='login' ? 'welcome back' : 'create your cloud';
+  document.getElementById('auth-submit').textContent = mode==='login' ? 'sign in' : 'sign up';
+  document.getElementById('auth-error').textContent = '';
+}
+
+authBtn.addEventListener('click', () => openOverlay('auth-overlay'));
+document.getElementById('auth-overlay').addEventListener('click', e => { if(e.target.id==='auth-overlay') closeOverlay('auth-overlay'); });
+
+document.getElementById('auth-submit').addEventListener('click', async () => {
+  const email    = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const errEl    = document.getElementById('auth-error');
+  errEl.textContent = '';
+  if (!email || !password) { errEl.textContent = 'please fill in all fields'; return; }
+
+  if (authMode === 'login') {
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) errEl.textContent = error.message;
+  } else {
+    const username = document.getElementById('auth-username').value.trim();
+    const isPublic = document.getElementById('auth-public').checked;
+    if (!username) { errEl.textContent = 'please choose a username'; return; }
+    const { data: existing } = await sb.from('profiles').select('id').eq('username', username).maybeSingle();
+    if (existing) { errEl.textContent = 'username already taken'; return; }
+    const { data, error } = await sb.auth.signUp({ email, password });
+    if (error) { errEl.textContent = error.message; return; }
+    // Update profile created by trigger
+    await sb.from('profiles').update({ username, is_public: isPublic }).eq('id', data.user.id);
+  }
+});
+
+// ─────────────────────────────────────────────
+//  SETTINGS PANEL
+// ─────────────────────────────────────────────
+settingsBtn.addEventListener('click', async () => {
+  if (!currentProfile) return;
+  document.getElementById('set-username').value  = currentProfile.username;
+  document.getElementById('set-public').checked  = currentProfile.is_public;
+  document.getElementById('set-public-label').textContent = currentProfile.is_public ? 'public profile' : 'private profile';
+  updateGrantsSection(currentProfile.is_public);
+  await loadGrants();
+  openOverlay('settings-overlay');
+});
+
+document.getElementById('set-public').addEventListener('change', function() {
+  updateGrantsSection(this.checked);
+  document.getElementById('set-public-label').textContent = this.checked ? 'public profile' : 'private profile';
+});
+
+function updateGrantsSection(isPublic) {
+  const gs = document.getElementById('grants-section');
+  gs.style.opacity = isPublic ? '0.4' : '1';
+  gs.style.pointerEvents = isPublic ? 'none' : '';
+}
+
+document.getElementById('settings-save').addEventListener('click', async () => {
+  const username = document.getElementById('set-username').value.trim();
+  const isPublic = document.getElementById('set-public').checked;
+  const errEl    = document.getElementById('settings-error');
+  errEl.textContent = '';
+  if (!username) { errEl.textContent = 'username cannot be empty'; return; }
+  if (username !== currentProfile.username) {
+    const { data: ex } = await sb.from('profiles').select('id').eq('username', username).maybeSingle();
+    if (ex) { errEl.textContent = 'username already taken'; return; }
+  }
+  const { error } = await sb.from('profiles').update({ username, is_public: isPublic }).eq('id', currentProfile.id);
+  if (error) { errEl.textContent = error.message; return; }
+  currentProfile.username  = username;
+  currentProfile.is_public = isPublic;
+  userNameEl.textContent   = username;
+  closeOverlay('settings-overlay');
+});
+
+document.getElementById('settings-cancel').addEventListener('click', () => closeOverlay('settings-overlay'));
+document.getElementById('settings-overlay').addEventListener('click', e => { if(e.target.id==='settings-overlay') closeOverlay('settings-overlay'); });
+
+document.getElementById('signout-btn').addEventListener('click', async () => {
+  await sb.auth.signOut();
+  closeOverlay('settings-overlay');
+});
+
+// ── GRANTS ──────────────────────────────────
+async function loadGrants() {
+  const { data } = await sb.from('access_grants').select('*').eq('owner_id', currentProfile.id);
+  const list = document.getElementById('grant-list');
+  list.innerHTML = '';
+  (data||[]).forEach(g => {
+    const item = document.createElement('div');
+    item.className = 'grant-item';
+    item.innerHTML = `<span>${escHtml(g.grantee_email)}</span><button class="grant-remove" data-id="${g.id}">×</button>`;
+    item.querySelector('.grant-remove').addEventListener('click', async () => {
+      await sb.from('access_grants').delete().eq('id', g.id);
+      item.remove();
+    });
+    list.appendChild(item);
+  });
+}
+
+document.getElementById('grant-btn').addEventListener('click', async () => {
+  const email     = document.getElementById('grant-email').value.trim();
+  const successEl = document.getElementById('grant-success');
+  successEl.textContent = '';
+  if (!email) return;
+  const { error } = await sb.from('access_grants').insert({ owner_id: currentProfile.id, grantee_email: email });
+  if (error) { successEl.style.color='#c0513a'; successEl.textContent = error.message; return; }
+  successEl.style.color = '#3a8a5c';
+  successEl.textContent = `${email} can now view your thoughts`;
+  document.getElementById('grant-email').value = '';
+  await loadGrants();
+});
+
+// ─────────────────────────────────────────────
+//  ADD THOUGHT
+// ─────────────────────────────────────────────
+addBtn.addEventListener('click', () => { if(isOwner) openOverlay('thought-panel-overlay'); });
+document.getElementById('cancel-btn').addEventListener('click', () => closeOverlay('thought-panel-overlay'));
+document.getElementById('thought-panel-overlay').addEventListener('click', e => { if(e.target.id==='thought-panel-overlay') closeOverlay('thought-panel-overlay'); });
+document.getElementById('input-tag').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('save-btn').click(); });
+
+document.getElementById('save-btn').addEventListener('click', async () => {
+  const text = document.getElementById('input-text').value.trim();
+  const tag  = document.getElementById('input-tag').value.trim() || 'thought';
+  if (!text) { document.getElementById('input-text').focus(); return; }
+  const pos = randomPos();
+  const { data, error } = await sb.from('thoughts')
+    .insert({ user_id: currentProfile.id, text, tag, date: new Date().toISOString(), x: pos.x, y: pos.y })
+    .select().single();
+  if (error) { console.error(error); return; }
+  thoughts.push(data); tags.add(data.tag);
+  refreshFilterOptions();
+  if (isTimeline) { renderTimeline(); }
+  else {
+    const el = makeCloud(data);
+    el.style.opacity='0'; el.style.transform='scale(0.5)translateY(30px)';
+    el.style.transition='opacity 0.5s,transform 0.5s';
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{ el.style.opacity='1'; el.style.transform=''; }));
+  }
+  closeOverlay('thought-panel-overlay');
+  document.getElementById('input-text').value = '';
+  document.getElementById('input-tag').value  = '';
+});
+
+// ─────────────────────────────────────────────
+//  CLOUD FACTORY
+// ─────────────────────────────────────────────
+function makeCloud(t) {
+  const el = document.createElement('div');
+  el.className = 'thought ' + floatClasses[Math.floor(Math.random()*3)];
+  el.dataset.id = t.id;
+  el.style.left = (t.x ?? randomPos().x) + 'px';
+  el.style.top  = (t.y ?? randomPos().y) + 'px';
+  el.innerHTML = `
+    <div class="cloud-wrap">
+      <div class="cloud-body">
+        <div class="cloud-puff1"></div>
+        <div class="thought-content">
+          <p class="thought-text">${escHtml(t.text)}</p>
+          <div class="thought-meta">
+            <span class="thought-tag">#${escHtml(t.tag)}</span>
+            <span class="thought-date">${formatDate(t.date)}</span>
+          </div>
+        </div>
+      </div>
+      <div class="cloud-tail"><span></span><span></span><span></span></div>
+    </div>`;
+  if (isOwner) {
+    el.addEventListener('mousedown', startDrag);
+    el.addEventListener('touchstart', startDrag, {passive:true});
+  } else {
+    el.style.cursor = 'default';
+  }
+  sky.appendChild(el);
+  return el;
+}
+
+// ─────────────────────────────────────────────
+//  DRAG
+// ─────────────────────────────────────────────
+function startDrag(e) {
+  const el = e.currentTarget;
+  el.classList.forEach(c => { if(c.startsWith('float-')) el.classList.remove(c); });
+  el.style.zIndex = 50;
+  const rect = el.getBoundingClientRect();
+  const cx = e.touches ? e.touches[0].clientX : e.clientX;
+  const cy = e.touches ? e.touches[0].clientY : e.clientY;
+  dragOffX = cx - rect.left; dragOffY = cy - rect.top;
+  dragging = el;
+}
+document.addEventListener('mousemove', e => {
+  if (!dragging) return; e.preventDefault();
+  dragging.style.left = (e.clientX - dragOffX) + 'px';
+  dragging.style.top  = (e.clientY - dragOffY) + 'px';
+});
+document.addEventListener('touchmove', e => {
+  if (!dragging) return; e.preventDefault();
+  dragging.style.left = (e.touches[0].clientX - dragOffX) + 'px';
+  dragging.style.top  = (e.touches[0].clientY - dragOffY) + 'px';
+}, {passive:false});
+document.addEventListener('mouseup',  endDrag);
+document.addEventListener('touchend', endDrag);
+async function endDrag() {
+  if (!dragging) return;
+  const id = dragging.dataset.id, x = parseInt(dragging.style.left), y = parseInt(dragging.style.top);
+  const t = thoughts.find(x => x.id === id);
+  if (t) { t.x = x; t.y = y; await sb.from('thoughts').update({x,y}).eq('id',id); }
+  dragging.classList.add(floatClasses[Math.floor(Math.random()*3)]);
+  dragging.style.zIndex = 10;
+  dragging = null;
+}
+
+// ─────────────────────────────────────────────
+//  FILTERS + TIMELINE
+// ─────────────────────────────────────────────
+const matches = t => (!activeTag || t.tag.toLowerCase().includes(activeTag.toLowerCase())) && (!activeMonth || monthKey(t.date) === activeMonth);
+
+function applyFilters() {
+  if (isTimeline) { renderTimeline(); return; }
+  let visible = 0;
+  sky.querySelectorAll('.thought').forEach(el => {
+    const t = thoughts.find(x => x.id === el.dataset.id);
+    if (!t) return;
+    if (matches(t)) { el.classList.remove('filtered-out'); el.classList.add('filtered-in'); visible++; }
+    else            { el.classList.add('filtered-out'); el.classList.remove('filtered-in'); }
+  });
+  emptyMsg.style.display = visible === 0 ? 'block' : 'none';
+}
+
+filterTagInput.addEventListener('input',  () => { activeTag   = filterTagInput.value.trim(); applyFilters(); });
+filterMonth.addEventListener('change',    () => { activeMonth = filterMonth.value;            applyFilters(); });
+
+sortBtn.addEventListener('click', () => {
+  isTimeline = !isTimeline;
+  sortBtn.classList.toggle('active', isTimeline);
+  sky.style.display = isTimeline ? 'none' : 'block';
+  timelineView.classList.toggle('active', isTimeline);
+  hint.style.display = isTimeline ? 'none' : '';
+  isTimeline ? renderTimeline() : applyFilters();
+});
+
+function renderTimeline() {
+  timelineView.innerHTML = '';
+  const filtered = thoughts.filter(matches).sort((a,b) => new Date(b.date)-new Date(a.date));
+  emptyMsg.style.display = filtered.length ? 'none' : 'block';
+  if (!filtered.length) return;
+  const groups = {};
+  filtered.forEach(t => { const k=monthKey(t.date); if(!groups[k]) groups[k]=[]; groups[k].push(t); });
+  Object.keys(groups).sort().reverse().forEach(k => {
+    const grp = document.createElement('div'); grp.className='timeline-group';
+    const lbl = document.createElement('div'); lbl.className='timeline-month-label'; lbl.textContent=monthLabel(k);
+    grp.appendChild(lbl);
+    const row = document.createElement('div'); row.className='timeline-row';
+    groups[k].forEach(t => {
+      const el = document.createElement('div'); el.className='timeline-cloud';
+      el.innerHTML=`<div class="cloud-wrap"><div class="cloud-body"><div class="cloud-puff1"></div><div class="thought-content"><p class="thought-text">${escHtml(t.text)}</p><div class="thought-meta"><span class="thought-tag">#${escHtml(t.tag)}</span><span class="thought-date">${formatDate(t.date)}</span></div></div></div><div class="cloud-tail"><span></span><span></span><span></span></div></div>`;
+      row.appendChild(el);
+    });
+    grp.appendChild(row); timelineView.appendChild(grp);
+  });
+}
+
+function refreshFilterOptions() {
+  [filterTagList, document.getElementById('tag-suggestions')].forEach(dl => {
+    dl.innerHTML = '';
+    tags.forEach(t => { const o=document.createElement('option'); o.value=t; dl.appendChild(o); });
+  });
+  const months = [...new Set(thoughts.map(t=>monthKey(t.date)))].sort().reverse();
+  filterMonth.innerHTML = '<option value="">all time</option>';
+  months.forEach(k => { const o=document.createElement('option'); o.value=k; o.textContent=monthLabel(k); filterMonth.appendChild(o); });
+}
+
+const hideLoading = () => loadingEl.style.display='none';
+
+init();
+</script>
+</body>
+</html>
