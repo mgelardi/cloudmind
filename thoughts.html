@@ -317,23 +317,24 @@ body::before {
 // ─────────────────────────────────────────────
 //  CONFIG — replace with your Supabase values
 // ─────────────────────────────────────────────
-const SUPABASE_URL  = 'https://irslndmtxhovvickocqo.supabase.co';
-const SUPABASE_ANON = 'sb_publishable_aYo1EVAXJdlfs4dshmFmwg_LrBspyn0';
+const SUPABASE_URL  = 'https://YOUR_PROJECT.supabase.co';
+const SUPABASE_ANON = 'YOUR_ANON_KEY';
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // ─────────────────────────────────────────────
 //  STATE
 // ─────────────────────────────────────────────
-let currentUser    = null;
-let currentProfile = null;
-let thoughts       = [];
-let tags           = new Set();
-let dragging       = null, dragOffX = 0, dragOffY = 0;
-let isTimeline     = false;
-let activeTag      = '';
-let activeMonth    = '';
-let isOwner        = false;
+let currentUser              = null;
+let currentProfile           = null;
+let thoughts                 = [];
+let tags                     = new Set();
+let dragging                 = null, dragOffX = 0, dragOffY = 0;
+let isTimeline               = false;
+let activeTag                = '';
+let activeMonth              = '';
+let isOwner                  = false;
+let suppressAuthStateChange  = false;   // blocks handleSignIn during sign-up flow
 
 const floatClasses = ['float-1','float-2','float-3'];
 
@@ -384,7 +385,7 @@ async function init() {
 //  SIGN IN / OUT
 // ─────────────────────────────────────────────
 async function handleSignIn(user) {
-  // Avoid re-running if already loaded for this user
+  if (suppressAuthStateChange) return;
   if (currentProfile && currentProfile.id === user.id) { hideLoading(); return; }
 
   currentUser = user;
@@ -396,16 +397,16 @@ async function handleSignIn(user) {
     .single();
 
   if (error || !profile) {
-    console.error('Profile not found for user:', user.id, error);
+    console.error('Profile not found:', user.id, error);
     hideLoading();
     return;
   }
 
-  currentProfile = profile;
+  currentProfile            = profile;
   userNameEl.textContent    = currentProfile.username;
   authBtn.style.display     = 'none';
   settingsBtn.style.display = '';
-  isOwner = true;
+  isOwner                   = true;
   addBtn.classList.add('visible');
   closeOverlay('auth-overlay');
 
@@ -414,17 +415,17 @@ async function handleSignIn(user) {
 }
 
 function handleSignOut() {
-  currentUser    = null;
-  currentProfile = null;
-  isOwner        = false;
+  currentUser               = null;
+  currentProfile            = null;
+  isOwner                   = false;
   userNameEl.textContent    = '';
   authBtn.style.display     = '';
   authBtn.textContent       = 'sign in';
   settingsBtn.style.display = 'none';
   addBtn.classList.remove('visible');
-  sky.innerHTML = '';
-  thoughts = [];
-  tags     = new Set();
+  sky.innerHTML             = '';
+  thoughts                  = [];
+  tags                      = new Set();
   refreshFilterOptions();
   hideLoading();
 }
@@ -434,8 +435,8 @@ function handleSignOut() {
 // ─────────────────────────────────────────────
 async function loadThoughts(userId) {
   sky.innerHTML = '';
-  thoughts = [];
-  tags     = new Set();
+  thoughts      = [];
+  tags          = new Set();
   const { data, error } = await sb
     .from('thoughts')
     .select('*')
@@ -477,42 +478,66 @@ document.getElementById('auth-submit').addEventListener('click', async () => {
 
   if (!email || !password) { errEl.textContent = 'please fill in all fields'; return; }
 
+  // ── SIGN IN ──────────────────────────────────
   if (authMode === 'login') {
     const { error } = await sb.auth.signInWithPassword({ email, password });
     if (error) errEl.textContent = error.message;
+    // onAuthStateChange SIGNED_IN → handleSignIn handles the rest
 
+  // ── SIGN UP ──────────────────────────────────
   } else {
     const username = document.getElementById('auth-username').value.trim();
     const isPublic = document.getElementById('auth-public').checked;
     if (!username) { errEl.textContent = 'please choose a username'; return; }
 
-    // Check username availability
-    const { data: existing } = await sb.from('profiles').select('id').eq('username', username).maybeSingle();
+    // Check username availability (profiles are publicly readable)
+    const { data: existing } = await sb
+      .from('profiles').select('id').eq('username', username).maybeSingle();
     if (existing) { errEl.textContent = 'username already taken'; return; }
 
-    // 1. Create auth user
+    // 1. Create the auth user
     const { data: signUpData, error: signUpErr } = await sb.auth.signUp({ email, password });
     if (signUpErr)        { errEl.textContent = signUpErr.message; return; }
     if (!signUpData.user) { errEl.textContent = 'sign up failed, please try again'; return; }
 
-    // 2. Sign in to get an active session
+    // 2. Suppress handleSignIn until we have a profile row ready
+    suppressAuthStateChange = true;
+
+    // 3. Sign in to get a session
     const { data: signInData, error: signInErr } = await sb.auth.signInWithPassword({ email, password });
-    if (signInErr) { errEl.textContent = signInErr.message; return; }
+    if (signInErr) {
+      suppressAuthStateChange = false;
+      errEl.textContent = signInErr.message;
+      return;
+    }
 
-    // 3. Use the session token directly for the insert to guarantee RLS passes
-    const accessToken = signInData.session.access_token;
-    const anonClient  = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
-      global: { headers: { Authorization: `Bearer ${accessToken}` } }
+    // 4. Insert profile row via direct REST fetch with the access token in the header.
+    //    This bypasses any Supabase JS client session-timing issues entirely.
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/profiles`, {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'apikey':        SUPABASE_ANON,
+        'Authorization': `Bearer ${signInData.session.access_token}`,
+        'Prefer':        'return=minimal'
+      },
+      body: JSON.stringify({
+        id:        signUpData.user.id,
+        email:     email,
+        username:  username,
+        is_public: isPublic
+      })
     });
-    const { error: profileErr } = await anonClient.from('profiles').insert({
-      id:        signUpData.user.id,
-      email:     email,
-      username:  username,
-      is_public: isPublic
-    });
-    if (profileErr) { errEl.textContent = 'Could not create profile: ' + profileErr.message; return; }
 
-    // 4. Now manually call handleSignIn with the session user
+    if (!res.ok) {
+      const body = await res.text();
+      suppressAuthStateChange = false;
+      errEl.textContent = 'Could not create profile: ' + body;
+      return;
+    }
+
+    // 5. Profile row exists — now safe to load the app
+    suppressAuthStateChange = false;
     await handleSignIn(signInData.session.user);
   }
 });
@@ -536,7 +561,7 @@ document.getElementById('set-public').addEventListener('change', function() {
 });
 
 function updateGrantsSection(isPublic) {
-  const gs = document.getElementById('grants-section');
+  const gs           = document.getElementById('grants-section');
   gs.style.opacity       = isPublic ? '0.4' : '1';
   gs.style.pointerEvents = isPublic ? 'none' : '';
 }
@@ -656,7 +681,7 @@ document.getElementById('save-btn').addEventListener('click', async () => {
 //  CLOUD FACTORY
 // ─────────────────────────────────────────────
 function makeCloud(t) {
-  const el = document.createElement('div');
+  const el      = document.createElement('div');
   el.className  = 'thought ' + floatClasses[Math.floor(Math.random()*3)];
   el.dataset.id = t.id;
   el.style.left = (t.x ?? randomPos().x) + 'px';
@@ -689,13 +714,13 @@ function makeCloud(t) {
 //  DRAG
 // ─────────────────────────────────────────────
 function startDrag(e) {
-  const el = e.currentTarget;
+  const el   = e.currentTarget;
   el.classList.forEach(c => { if (c.startsWith('float-')) el.classList.remove(c); });
   el.style.zIndex = 50;
   const rect = el.getBoundingClientRect();
-  dragOffX = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
-  dragOffY = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
-  dragging = el;
+  dragOffX   = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+  dragOffY   = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
+  dragging   = el;
 }
 document.addEventListener('mousemove', e => {
   if (!dragging) return; e.preventDefault();
