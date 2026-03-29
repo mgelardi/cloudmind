@@ -486,29 +486,34 @@ document.getElementById('auth-submit').addEventListener('click', async () => {
     const isPublic = document.getElementById('auth-public').checked;
     if (!username) { errEl.textContent = 'please choose a username'; return; }
 
-    // Check username availability — profiles are publicly readable so this works unauthed
-    const { data: existing } = await sb
-      .from('profiles').select('id').eq('username', username).maybeSingle();
+    // Check username availability
+    const { data: existing } = await sb.from('profiles').select('id').eq('username', username).maybeSingle();
     if (existing) { errEl.textContent = 'username already taken'; return; }
 
-    // Create auth user
+    // 1. Create auth user
     const { data: signUpData, error: signUpErr } = await sb.auth.signUp({ email, password });
     if (signUpErr)        { errEl.textContent = signUpErr.message; return; }
     if (!signUpData.user) { errEl.textContent = 'sign up failed, please try again'; return; }
 
-    // Sign in right away to get an active session
-    const { error: signInErr } = await sb.auth.signInWithPassword({ email, password });
+    // 2. Sign in to get an active session
+    const { data: signInData, error: signInErr } = await sb.auth.signInWithPassword({ email, password });
     if (signInErr) { errEl.textContent = signInErr.message; return; }
 
-    // Insert profile row — session is now active so RLS passes
-    const { error: profileErr } = await sb.from('profiles').insert({
+    // 3. Use the session token directly for the insert to guarantee RLS passes
+    const accessToken = signInData.session.access_token;
+    const anonClient  = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
+      global: { headers: { Authorization: `Bearer ${accessToken}` } }
+    });
+    const { error: profileErr } = await anonClient.from('profiles').insert({
       id:        signUpData.user.id,
       email:     email,
       username:  username,
       is_public: isPublic
     });
-    if (profileErr) { errEl.textContent = profileErr.message; return; }
-    // SIGNED_IN event fires from signInWithPassword → handleSignIn loads everything
+    if (profileErr) { errEl.textContent = 'Could not create profile: ' + profileErr.message; return; }
+
+    // 4. Now manually call handleSignIn with the session user
+    await handleSignIn(signInData.session.user);
   }
 });
 
