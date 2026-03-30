@@ -317,10 +317,21 @@ body::before {
 // ─────────────────────────────────────────────
 //  CONFIG — replace with your Supabase values
 // ─────────────────────────────────────────────
-const SUPABASE_URL  = 'https://irslndmtxhovvickocqo.supabase.co';
-const SUPABASE_ANON = 'sb_publishable_aYo1EVAXJdlfs4dshmFmwg_LrBspyn0';
+let sb = null;
 
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+async function loadRuntimeConfig() {
+  const res = await fetch('/api/config', { cache: 'no-store' });
+  if (!res.ok) {
+    throw new Error('Could not load app configuration');
+  }
+
+  const config = await res.json();
+  if (!config.supabaseUrl || !config.supabaseAnonKey) {
+    throw new Error('Supabase configuration is missing');
+  }
+
+  return config;
+}
 
 // ─────────────────────────────────────────────
 //  STATE
@@ -371,6 +382,16 @@ const hideLoading  = () => { loadingEl.style.display='none'; };
 //  BOOT
 // ─────────────────────────────────────────────
 async function init() {
+  try {
+    const { supabaseUrl, supabaseAnonKey } = await loadRuntimeConfig();
+    sb = supabase.createClient(supabaseUrl, supabaseAnonKey);
+  } catch (error) {
+    console.error('init config error:', error);
+    document.getElementById('auth-error').textContent = 'App configuration failed to load';
+    hideLoading();
+    return;
+  }
+
   sb.auth.onAuthStateChange(async (event, session) => {
     if (event === 'INITIAL_SESSION') {
       if (session) await handleSignIn(session.user);
