@@ -510,13 +510,18 @@ document.getElementById('auth-submit').addEventListener('click', async () => {
       errEl.textContent = signInErr.message;
       return;
     }
+    if (!signInData.session?.user) {
+      suppressAuthStateChange = false;
+      errEl.textContent = 'Could not create a signed-in session after sign up';
+      return;
+    }
 
     // 4. Upsert the profile row so retries or DB triggers do not collide.
     const { error: profileErr } = await sb
       .from('profiles')
       .upsert(
         {
-          id: signUpData.user.id,
+          id: signInData.session.user.id,
           email,
           username,
           is_public: isPublic
