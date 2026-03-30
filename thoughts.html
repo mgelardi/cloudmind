@@ -317,8 +317,8 @@ body::before {
 // ─────────────────────────────────────────────
 //  CONFIG — replace with your Supabase values
 // ─────────────────────────────────────────────
-const SUPABASE_URL  = 'https://irslndmtxhovvickocqo.supabase.co';
-const SUPABASE_ANON = 'sb_publishable_aYo1EVAXJdlfs4dshmFmwg_LrBspyn0';
+const SUPABASE_URL  = 'https://YOUR_PROJECT.supabase.co';
+const SUPABASE_ANON = 'YOUR_ANON_KEY';
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
@@ -511,28 +511,22 @@ document.getElementById('auth-submit').addEventListener('click', async () => {
       return;
     }
 
-    // 4. Insert profile row via direct REST fetch with the access token in the header.
-    //    This bypasses any Supabase JS client session-timing issues entirely.
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/profiles`, {
-      method:  'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'apikey':        SUPABASE_ANON,
-        'Authorization': `Bearer ${signInData.session.access_token}`,
-        'Prefer':        'return=minimal'
-      },
-      body: JSON.stringify({
-        id:        signUpData.user.id,
-        email:     email,
-        username:  username,
-        is_public: isPublic
-      })
-    });
+    // 4. Upsert the profile row so retries or DB triggers do not collide.
+    const { error: profileErr } = await sb
+      .from('profiles')
+      .upsert(
+        {
+          id: signUpData.user.id,
+          email,
+          username,
+          is_public: isPublic
+        },
+        { onConflict: 'id' }
+      );
 
-    if (!res.ok) {
-      const body = await res.text();
+    if (profileErr) {
       suppressAuthStateChange = false;
-      errEl.textContent = 'Could not create profile: ' + body;
+      errEl.textContent = 'Could not create profile: ' + profileErr.message;
       return;
     }
 
