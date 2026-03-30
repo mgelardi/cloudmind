@@ -377,6 +377,11 @@ const randomPos  = () => ({ x: 60+Math.random()*(window.innerWidth-280-120), y: 
 const openOverlay  = id => document.getElementById(id).classList.add('open');
 const closeOverlay = id => document.getElementById(id).classList.remove('open');
 const hideLoading  = () => { loadingEl.style.display='none'; };
+const showFatalError = message => {
+  emptyMsg.textContent = message;
+  emptyMsg.style.display = 'block';
+  authBtn.style.display = 'none';
+};
 
 // ─────────────────────────────────────────────
 //  BOOT
@@ -387,7 +392,7 @@ async function init() {
     sb = supabase.createClient(supabaseUrl, supabaseAnonKey);
   } catch (error) {
     console.error('init config error:', error);
-    document.getElementById('auth-error').textContent = 'App configuration failed to load';
+    showFatalError('App configuration failed to load. Please try again later.');
     hideLoading();
     return;
   }
@@ -439,15 +444,26 @@ function handleSignOut() {
   currentUser               = null;
   currentProfile            = null;
   isOwner                   = false;
+  isTimeline                = false;
+  activeTag                 = '';
+  activeMonth               = '';
   userNameEl.textContent    = '';
   authBtn.style.display     = '';
   authBtn.textContent       = 'sign in';
   settingsBtn.style.display = 'none';
   addBtn.classList.remove('visible');
   sky.innerHTML             = '';
+  sky.style.display         = 'block';
+  timelineView.innerHTML    = '';
+  timelineView.classList.remove('active');
+  filterTagInput.value      = '';
+  filterMonth.value         = '';
+  sortBtn.classList.remove('active');
+  hint.style.display        = '';
   thoughts                  = [];
   tags                      = new Set();
   refreshFilterOptions();
+  emptyMsg.style.display    = 'none';
   hideLoading();
 }
 
