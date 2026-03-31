@@ -4,7 +4,6 @@ const {
   getRequestQuery,
   json,
   methodNotAllowed,
-  requireSession,
 } = require('../_supabase');
 
 module.exports = async function handler(req, res) {
@@ -15,17 +14,8 @@ module.exports = async function handler(req, res) {
     const username = (query.get('username') || '').trim();
     if (!username) return json(res, 400, { error: 'username is required' });
 
-    let session = null;
-    if (req.headers.cookie) {
-      try {
-        session = await requireSession(req, res);
-      } catch (error) {
-        console.error('availability session lookup error:', error);
-      }
-    }
-
     const existing = await findProfileByUsername(username);
-    const available = !existing || (session && existing.id === session.user.id);
+    const available = !existing;
 
     return json(res, 200, { available });
   } catch (error) {
