@@ -198,17 +198,22 @@ async function init() {
   resetEmptyMessage();
   try {
     const session = await apiFetch('/api/auth/session');
-    await applySession(session);
-  } catch (error) {
-    if (error.status === 401) {
+    if (session?.user && session?.profile) {
+      await applySession(session);
+    } else {
       await loadSignedOutLanding();
       hideLoading();
-      return;
     }
-
+  } catch (error) {
     console.error('init session error:', error);
-    showFatalError('App failed to load. Please try again later.');
-    hideLoading();
+    try {
+      await loadSignedOutLanding();
+      hideLoading();
+    } catch (landingError) {
+      console.error('signed out landing error:', landingError);
+      showFatalError('App failed to load. Please try again later.');
+      hideLoading();
+    }
   }
 }
 
@@ -219,7 +224,24 @@ async function loadSignedOutLanding() {
   authBtn.textContent = 'sign in';
   settingsBtn.style.display = 'none';
   userNameEl.textContent = '';
-  await setView(PUBLIC_VIEW, { reload: true });
+
+  try {
+    await setView(PUBLIC_VIEW, { reload: true });
+  } catch (error) {
+    console.error('public landing load error:', error);
+    thoughts = [];
+    tags = new Set();
+    sky.innerHTML = '';
+    timelineView.innerHTML = '';
+    currentView = PUBLIC_VIEW;
+    isOwner = false;
+    isTimeline = false;
+    refreshHeaderState();
+    syncFilterUi();
+    emptyMsg.textContent = 'public thoughts are unavailable right now ☁️';
+    emptyMsg.style.display = 'block';
+    hideLoading();
+  }
 }
 
 // ─────────────────────────────────────────────
