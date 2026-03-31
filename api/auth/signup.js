@@ -1,7 +1,7 @@
 const {
+  ensureProfileForUser,
   extractError,
   findProfileByUsername,
-  getProfileById,
   json,
   methodNotAllowed,
   readJsonBody,
@@ -52,7 +52,7 @@ module.exports = async function handler(req, res) {
   const signupSession = signup.data?.session;
   if (signupSession?.access_token && signupSession?.refresh_token) {
     setSessionCookies(res, signupSession);
-    const profile = await getProfileById(signupUser.id);
+    const profile = await ensureProfileForUser(signupUser, { email, username, isPublic });
     return json(res, 200, {
       user: signupUser,
       profile,
@@ -66,7 +66,7 @@ module.exports = async function handler(req, res) {
 
   if (login.ok && login.data?.user) {
     setSessionCookies(res, login.data);
-    const profile = await getProfileById(login.data.user.id);
+    const profile = await ensureProfileForUser(login.data.user, { email, username, isPublic });
     return json(res, 200, {
       user: login.data.user,
       profile,

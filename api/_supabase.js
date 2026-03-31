@@ -166,6 +166,58 @@ async function findProfileByUsername(username) {
   return Array.isArray(res.data) ? res.data[0] || null : res.data;
 }
 
+function slugifyUsername(value) {
+  const slug = String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 24);
+  return slug || 'cloudmind-user';
+}
+
+async function buildAvailableUsername(base, userId) {
+  const stem = slugifyUsername(base);
+  for (let index = 0; index < 20; index += 1) {
+    const suffix = index === 0 ? '' : `-${String(userId || '').slice(0, 6)}${index > 1 ? index : ''}`;
+    const candidate = `${stem}${suffix}`.slice(0, 30);
+    const existing = await findProfileByUsername(candidate);
+    if (!existing || existing.id === userId) return candidate;
+  }
+  return `${stem}-${String(userId || 'user').slice(0, 8)}`.slice(0, 30);
+}
+
+async function ensureProfileForUser(user, overrides = {}) {
+  if (!user?.id) return null;
+
+  const existing = await getProfileById(user.id);
+  if (existing) return existing;
+
+  const email = overrides.email || user.email || '';
+  const emailStem = email.includes('@') ? email.split('@')[0] : '';
+  const metadataName = user.user_metadata?.username || user.user_metadata?.user_name || user.user_metadata?.name || '';
+  const username = await buildAvailableUsername(overrides.username || metadataName || emailStem || user.id, user.id);
+
+  const insert = await supabaseFetch('/rest/v1/profiles?on_conflict=id', {
+    method: 'POST',
+    serviceRole: true,
+    headers: {
+      Prefer: 'resolution=merge-duplicates,return=representation',
+    },
+    body: [{
+      id: user.id,
+      email,
+      username,
+      is_public: typeof overrides.isPublic === 'boolean' ? overrides.isPublic : false,
+    }],
+  });
+
+  if (!insert.ok) {
+    throw new Error(extractError(insert, 'Could not create profile'));
+  }
+
+  return Array.isArray(insert.data) ? insert.data[0] || null : insert.data;
+}
+
 function extractError(result, fallback) {
   if (!result) return fallback;
   if (result instanceof Error && result.message) return result.message;
@@ -179,6 +231,7 @@ function extractError(result, fallback) {
 
 module.exports = {
   clearSessionCookies,
+  ensureProfileForUser,
   extractError,
   findProfileByUsername,
   getProfileById,

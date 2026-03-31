@@ -1,6 +1,6 @@
 const {
+  ensureProfileForUser,
   extractError,
-  getProfileById,
   json,
   methodNotAllowed,
   readJsonBody,
@@ -22,8 +22,7 @@ module.exports = async function handler(req, res) {
   if (!login.ok) return json(res, login.status, { error: extractError(login, 'Could not sign in') });
 
   setSessionCookies(res, login.data);
-  const profile = await getProfileById(login.data.user.id);
-  if (!profile) return json(res, 404, { error: 'Profile not found' });
+  const profile = await ensureProfileForUser(login.data.user);
 
   return json(res, 200, {
     user: login.data.user,

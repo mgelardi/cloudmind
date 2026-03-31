@@ -1,5 +1,5 @@
 const {
-  getProfileById,
+  ensureProfileForUser,
   json,
   methodNotAllowed,
   requireSession,
@@ -16,8 +16,7 @@ module.exports = async function handler(req, res) {
     });
   }
 
-  const profile = await getProfileById(session.user.id);
-  if (!profile) return json(res, 404, { error: 'Profile not found' });
+  const profile = await ensureProfileForUser(session.user);
 
   return json(res, 200, {
     user: session.user,
