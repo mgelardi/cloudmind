@@ -358,8 +358,18 @@ document.getElementById('auth-submit').addEventListener('click', async () => {
       method: 'POST',
       body: JSON.stringify({ email, password, username, isPublic }),
     });
+
+    if (session?.pendingVerification) {
+      errEl.style.color = '#3a8a5c';
+      errEl.textContent = session.message || 'Account created. Please check your email to confirm your account.';
+      switchTab('login');
+      document.getElementById('auth-password').value = '';
+      return;
+    }
+
     await applySession(session);
   } catch (error) {
+    errEl.style.color = '#c0513a';
     errEl.textContent = error.message;
   }
 });

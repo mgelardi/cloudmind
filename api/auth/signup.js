@@ -26,11 +26,10 @@ module.exports = async function handler(req, res) {
   });
   if (!signup.ok) return json(res, signup.status, { error: extractError(signup, 'Could not sign up') });
 
-  const login = await supabaseFetch('/auth/v1/token?grant_type=password', {
-    method: 'POST',
-    body: { email, password },
-  });
-  if (!login.ok) return json(res, login.status, { error: extractError(login, 'Could not sign in after sign up') });
+  const signupUser = signup.data?.user;
+  if (!signupUser?.id) {
+    return json(res, 500, { error: 'Sign up succeeded but no user was returned' });
+  }
 
   const upsert = await supabaseFetch('/rest/v1/profiles?on_conflict=id', {
     method: 'POST',
@@ -39,7 +38,7 @@ module.exports = async function handler(req, res) {
       Prefer: 'resolution=merge-duplicates,return=representation',
     },
     body: [{
-      id: login.data.user.id,
+      id: signupUser.id,
       email,
       username,
       is_public: !!isPublic,
@@ -50,10 +49,32 @@ module.exports = async function handler(req, res) {
     return json(res, upsert.status, { error: extractError(upsert, 'Could not create profile') });
   }
 
-  setSessionCookies(res, login.data);
-  const profile = await getProfileById(login.data.user.id);
+  const signupSession = signup.data?.session;
+  if (signupSession?.access_token && signupSession?.refresh_token) {
+    setSessionCookies(res, signupSession);
+    const profile = await getProfileById(signupUser.id);
+    return json(res, 200, {
+      user: signupUser,
+      profile,
+    });
+  }
+
+  const login = await supabaseFetch('/auth/v1/token?grant_type=password', {
+    method: 'POST',
+    body: { email, password },
+  });
+
+  if (login.ok && login.data?.user) {
+    setSessionCookies(res, login.data);
+    const profile = await getProfileById(login.data.user.id);
+    return json(res, 200, {
+      user: login.data.user,
+      profile,
+    });
+  }
+
   return json(res, 200, {
-    user: login.data.user,
-    profile,
+    pendingVerification: true,
+    message: 'Account created. Please check your email to confirm your account before signing in.',
   });
 };
