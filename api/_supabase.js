@@ -168,6 +168,8 @@ async function findProfileByUsername(username) {
 
 function extractError(result, fallback) {
   if (!result) return fallback;
+  if (result instanceof Error && result.message) return result.message;
+  if (typeof result.message === 'string' && result.message) return result.message;
   if (result.data?.msg) return result.data.msg;
   if (result.data?.message) return result.data.message;
   if (result.data?.error_description) return result.data.error_description;
