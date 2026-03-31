@@ -108,6 +108,14 @@ body::before {
 .thought-text { font-family:'Caveat',cursive; font-size:15.5px; font-weight:500; line-height:1.45; color:var(--ink); margin-bottom:8px; word-break:break-word; }
 .thought-meta { display:flex; align-items:center; justify-content:center; gap:6px; flex-wrap:wrap; }
 .thought-tag { font-family:'Lora',serif; font-size:10px; font-weight:500; letter-spacing:0.06em; text-transform:uppercase; background:var(--tag-bg); color:var(--tag-color); border-radius:20px; padding:2px 8px; }
+.thought-status, .thought-user {
+  font-family:'Lora',serif; font-size:10px; font-weight:500; letter-spacing:0.04em;
+  border-radius:20px; padding:2px 8px;
+}
+.thought-status-positive { background:rgba(118,182,120,0.18); color:#3f7e44; }
+.thought-status-neutral  { background:rgba(120,140,160,0.15); color:#5b7287; }
+.thought-status-negative { background:rgba(224,122,95,0.16); color:#b05b45; }
+.thought-user { background:rgba(61,138,191,0.12); color:#346788; font-style:italic; }
 .thought-date { font-family:'Lora',serif; font-size:9.5px; color:var(--muted); font-style:italic; }
 
 @keyframes float1{0%,100%{transform:translateY(0)rotate(0)}33%{transform:translateY(-10px)rotate(.5deg)}66%{transform:translateY(-5px)rotate(-.5deg)}}
@@ -197,6 +205,20 @@ body::before {
 .grant-remove { border:none; background:none; color:var(--accent); font-size:16px; cursor:pointer; line-height:1; }
 .field-row { display:flex; align-items:center; gap:8px; }
 .field-row .field { flex:1; margin:0; }
+.status-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+.status-option input { position:absolute; opacity:0; pointer-events:none; }
+.status-pill {
+  display:flex; justify-content:center; align-items:center; width:100%;
+  padding:10px 8px; border-radius:14px; border:1.5px solid rgba(100,170,220,0.2);
+  background:rgba(255,255,255,0.82); font-family:'Lora',serif; font-size:12px;
+  color:var(--muted); cursor:pointer; transition:transform 0.15s, border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.status-option input:checked + .status-pill {
+  border-color:rgba(61,138,191,0.4); box-shadow:0 8px 20px rgba(90,175,222,0.14); color:var(--tag-color); transform:translateY(-1px);
+}
+.status-pill.positive { background:rgba(118,182,120,0.12); }
+.status-pill.neutral { background:rgba(120,140,160,0.1); }
+.status-pill.negative { background:rgba(224,122,95,0.1); }
 
 /* ── MISC ── */
 #empty-msg { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); font-family:'Lora',serif; font-size:14px; font-style:italic; color:rgba(30,80,130,0.4); pointer-events:none; z-index:4; display:none; text-align:center; }
@@ -226,7 +248,22 @@ body::before {
   <input id="filter-tag" type="text" placeholder="filter by tag…" list="filter-tag-list" autocomplete="off">
   <datalist id="filter-tag-list"></datalist>
   <div class="filter-divider"></div>
-  <select id="filter-month"><option value="">all time</option></select>
+  <select id="filter-date">
+    <option value="all">all time</option>
+    <option value="today">today</option>
+  </select>
+  <div class="filter-divider"></div>
+  <select id="filter-status">
+    <option value="">all moods</option>
+    <option value="positive">positive</option>
+    <option value="neutral">neutral</option>
+    <option value="negative">negative</option>
+  </select>
+  <div class="filter-divider" id="filter-scope-divider" style="display:none"></div>
+  <select id="filter-scope" style="display:none">
+    <option value="mine">my thoughts</option>
+    <option value="public">public feed</option>
+  </select>
   <div class="filter-divider"></div>
   <button id="sort-btn">
     <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M1 3h11M1 6.5h7M1 10h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
@@ -272,6 +309,24 @@ body::before {
     <h2>a new thought ☁️</h2>
     <div class="field"><label>the thought</label><textarea id="input-text" placeholder="What's drifting through your mind…"></textarea></div>
     <div class="field"><label>tag</label><input id="input-tag" type="text" placeholder="e.g. idea, memory, question…" list="tag-suggestions"><datalist id="tag-suggestions"></datalist></div>
+    <div class="field">
+      <label>tone</label>
+      <div class="status-grid">
+        <label class="status-option">
+          <input type="radio" name="thought-status" id="status-positive" value="positive">
+          <span class="status-pill positive">positive</span>
+        </label>
+        <label class="status-option">
+          <input type="radio" name="thought-status" id="status-neutral" value="neutral" checked>
+          <span class="status-pill neutral">neutral</span>
+        </label>
+        <label class="status-option">
+          <input type="radio" name="thought-status" id="status-negative" value="negative">
+          <span class="status-pill negative">negative</span>
+        </label>
+      </div>
+    </div>
+    <div class="error-msg" id="thought-error"></div>
     <div class="panel-actions">
       <button class="btn btn-ghost" id="cancel-btn">cancel</button>
       <button class="btn btn-primary" id="save-btn">let it float ↑</button>

@@ -21,8 +21,10 @@ module.exports = async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
-    const { text, tag, date, x, y } = await readJsonBody(req);
+    const { text, tag, status, date, x, y } = await readJsonBody(req);
     if (!text) return json(res, 400, { error: 'Thought text is required' });
+
+    const normalizedStatus = ['positive', 'neutral', 'negative'].includes(status) ? status : 'neutral';
 
     const result = await supabaseFetch('/rest/v1/thoughts', {
       method: 'POST',
@@ -34,6 +36,7 @@ module.exports = async function handler(req, res) {
         user_id: session.user.id,
         text,
         tag: tag || 'thought',
+        status: normalizedStatus,
         date,
         x,
         y,
